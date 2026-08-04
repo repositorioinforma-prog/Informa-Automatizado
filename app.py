@@ -40,6 +40,19 @@ except Exception as e:
     SWEETVIZ_AVAILABLE = False
     SWEETVIZ_IMPORT_ERROR = str(e)
 
+# python-pptx protegido, usado na exportação dos mapas para PowerPoint
+try:
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    PPTX_AVAILABLE = True
+    PPTX_IMPORT_ERROR = ""
+except Exception as e:
+    Presentation = None
+    Inches = None
+    Pt = None
+    PPTX_AVAILABLE = False
+    PPTX_IMPORT_ERROR = str(e)
+
 
 # =========================
 # Configuração da página
@@ -51,6 +64,25 @@ except Exception as e:
 VARIAVEIS_INTERESSE_PADRAO = [
     "P1", "P2", "P3", "P4", "P5", "juncaoreligiao", "P7", "P7_C",
 ]
+
+# Nomes amigáveis para exibir no lugar do código da variável (ex.: nos
+# títulos dos slides do PowerPoint exportado). Variáveis sem entrada aqui
+# continuam aparecendo com o próprio código (ex.: "juncaoreligiao").
+ROTULOS_VARIAVEIS = {
+    "P1": "SEXO",
+    "P2": "IDADE",
+    "P3": "RENDA",
+    "P4": "ESCOLARIDADE",
+    "P5": "RAÇA",
+    "P7": "REGIÕES",
+    "P7_C": "CAPITAL",
+}
+
+
+def _rotulo_amigavel(variavel):
+    """Retorna o nome amigável da variável, se houver; senão, o próprio código."""
+    return ROTULOS_VARIAVEIS.get(variavel, variavel)
+
 
 st.set_page_config(page_title="Análise de Dados Automática", layout="wide")
 
@@ -1148,142 +1180,180 @@ def _renderizar_mapa_correspondencia(
     ax.set_title(f"{var_linha} x {var_coluna}", fontsize=14)
     st.pyplot(fig)
 
-    st.subheader("Mapa interativo")
+    with st.expander("Mapa interativo (clique para exibir)", expanded=False):
+        fig_int = go.Figure()
 
-    fig_int = go.Figure()
-
-    fig_int.add_trace(go.Scatter(
-        x=[p["x"] for p in pontos_linhas],
-        y=[p["y"] for p in pontos_linhas],
-        mode="markers",
-        name=legenda_linhas,
-        marker=dict(color="blue", symbol="circle", size=8),
-        showlegend=mostrar_legenda and len(pontos_linhas) > 0
-    ))
-
-    fig_int.add_trace(go.Scatter(
-        x=[p["x"] for p in pontos_colunas],
-        y=[p["y"] for p in pontos_colunas],
-        mode="markers",
-        name=legenda_colunas,
-        marker=dict(color="red", symbol="triangle-up", size=10),
-        showlegend=mostrar_legenda and len(pontos_colunas) > 0
-    ))
-
-    annotations = []
-    for p in pontos_linhas:
-        annotations.append(dict(
-            x=p["x"] + p["dx"],
-            y=p["y"] + p["dy"],
-            xref="x",
-            yref="y",
-            text=p["label"],
-            showarrow=False,
-            font=dict(color="blue", size=10),
-            xanchor="center",
-            yanchor="bottom",
-        ))
-    for p in pontos_colunas:
-        annotations.append(dict(
-            x=p["x"] + p["dx"],
-            y=p["y"] + p["dy"],
-            xref="x",
-            yref="y",
-            text=p["label"],
-            showarrow=False,
-            font=dict(color="red", size=10),
-            xanchor="center",
-            yanchor="bottom",
+        fig_int.add_trace(go.Scatter(
+            x=[p["x"] for p in pontos_linhas],
+            y=[p["y"] for p in pontos_linhas],
+            mode="markers",
+            name=legenda_linhas,
+            marker=dict(color="blue", symbol="circle", size=8),
+            showlegend=mostrar_legenda and len(pontos_linhas) > 0
         ))
 
-    xs = [p["x"] for p in pontos_linhas] + [p["x"] for p in pontos_colunas]
-    ys = [p["y"] for p in pontos_linhas] + [p["y"] for p in pontos_colunas]
+        fig_int.add_trace(go.Scatter(
+            x=[p["x"] for p in pontos_colunas],
+            y=[p["y"] for p in pontos_colunas],
+            mode="markers",
+            name=legenda_colunas,
+            marker=dict(color="red", symbol="triangle-up", size=10),
+            showlegend=mostrar_legenda and len(pontos_colunas) > 0
+        ))
 
-    if xs and ys:
-        x_min, x_max = min(xs), max(xs)
-        y_min, y_max = min(ys), max(ys)
-        dx_range = (x_max - x_min) * 0.1 or 0.1
-        dy_range = (y_max - y_min) * 0.1 or 0.1
-        x_range = [x_min - dx_range, x_max + dx_range]
-        y_range = [y_min - dy_range, y_max + dy_range]
-    else:
-        x_range = [-1, 1]
-        y_range = [-1, 1]
+        annotations = []
+        for p in pontos_linhas:
+            annotations.append(dict(
+                x=p["x"] + p["dx"],
+                y=p["y"] + p["dy"],
+                xref="x",
+                yref="y",
+                text=p["label"],
+                showarrow=False,
+                font=dict(color="blue", size=10),
+                xanchor="center",
+                yanchor="bottom",
+            ))
+        for p in pontos_colunas:
+            annotations.append(dict(
+                x=p["x"] + p["dx"],
+                y=p["y"] + p["dy"],
+                xref="x",
+                yref="y",
+                text=p["label"],
+                showarrow=False,
+                font=dict(color="red", size=10),
+                xanchor="center",
+                yanchor="bottom",
+            ))
 
-    fig_int.update_layout(
-        template=None,
-        title=dict(
-            text=f"{var_linha} x {var_coluna}",
-            font=dict(color="black", size=14),
-            x=0.5
-        ),
-        font=dict(color="black"),
-        paper_bgcolor="white",
-        plot_bgcolor="white",
-        annotations=annotations,
-        showlegend=mostrar_legenda,
-        legend=dict(
-            x=0.99, y=0.99,
-            xanchor="right", yanchor="top",
-            bgcolor="rgba(0,0,0,0)",
-            font=dict(color="black", size=12),
-        ),
-        margin=dict(l=40, r=20, t=60, b=40),
-        xaxis=dict(range=x_range),
-        yaxis=dict(range=y_range),
-    )
+        xs = [p["x"] for p in pontos_linhas] + [p["x"] for p in pontos_colunas]
+        ys = [p["y"] for p in pontos_linhas] + [p["y"] for p in pontos_colunas]
 
-    fig_int.update_xaxes(
-        title=dict(text="", font=dict(color="black")),
-        showgrid=True,
-        gridcolor="lightgray",
-        gridwidth=0.5,
-        griddash="dash",
-        zeroline=False,
-        tickfont=dict(color="black"),
-        linecolor="black",
-        mirror=True,
-    )
-    fig_int.update_yaxes(
-        title=dict(text="", font=dict(color="black")),
-        showgrid=True,
-        gridcolor="lightgray",
-        gridwidth=0.5,
-        griddash="dash",
-        zeroline=False,
-        tickfont=dict(color="black"),
-        linecolor="black",
-        mirror=True,
-    )
+        if xs and ys:
+            x_min, x_max = min(xs), max(xs)
+            y_min, y_max = min(ys), max(ys)
+            dx_range = (x_max - x_min) * 0.1 or 0.1
+            dy_range = (y_max - y_min) * 0.1 or 0.1
+            x_range = [x_min - dx_range, x_max + dx_range]
+            y_range = [y_min - dy_range, y_max + dy_range]
+        else:
+            x_range = [-1, 1]
+            y_range = [-1, 1]
 
-    fig_int.add_shape(
-        type="line",
-        x0=x_range[0], x1=x_range[1],
-        y0=0, y1=0,
-        line=dict(color="black", width=1, dash="dash"),
-        xref="x", yref="y",
-        layer="above"
-    )
-    fig_int.add_shape(
-        type="line",
-        x0=0, x1=0,
-        y0=y_range[0], y1=y_range[1],
-        line=dict(color="black", width=1, dash="dash"),
-        xref="x", yref="y",
-        layer="above"
-    )
+        fig_int.update_layout(
+            template=None,
+            title=dict(
+                text=f"{var_linha} x {var_coluna}",
+                font=dict(color="black", size=14),
+                x=0.5
+            ),
+            font=dict(color="black"),
+            paper_bgcolor="white",
+            plot_bgcolor="white",
+            annotations=annotations,
+            showlegend=mostrar_legenda,
+            legend=dict(
+                x=0.99, y=0.99,
+                xanchor="right", yanchor="top",
+                bgcolor="rgba(0,0,0,0)",
+                font=dict(color="black", size=12),
+            ),
+            margin=dict(l=40, r=20, t=60, b=40),
+            xaxis=dict(range=x_range),
+            yaxis=dict(range=y_range),
+        )
 
-    config = {
-        "editable": True,
-        "edits": {"annotationPosition": True},
-    }
+        fig_int.update_xaxes(
+            title=dict(text="", font=dict(color="black")),
+            showgrid=True,
+            gridcolor="lightgray",
+            gridwidth=0.5,
+            griddash="dash",
+            zeroline=False,
+            tickfont=dict(color="black"),
+            linecolor="black",
+            mirror=True,
+        )
+        fig_int.update_yaxes(
+            title=dict(text="", font=dict(color="black")),
+            showgrid=True,
+            gridcolor="lightgray",
+            gridwidth=0.5,
+            griddash="dash",
+            zeroline=False,
+            tickfont=dict(color="black"),
+            linecolor="black",
+            mirror=True,
+        )
 
-    st.plotly_chart(
-        fig_int,
-        use_container_width=True,
-        config=config,
-        key=f"plotly_chart__{key_prefix}"
-    )
+        fig_int.add_shape(
+            type="line",
+            x0=x_range[0], x1=x_range[1],
+            y0=0, y1=0,
+            line=dict(color="black", width=1, dash="dash"),
+            xref="x", yref="y",
+            layer="above"
+        )
+        fig_int.add_shape(
+            type="line",
+            x0=0, x1=0,
+            y0=y_range[0], y1=y_range[1],
+            line=dict(color="black", width=1, dash="dash"),
+            xref="x", yref="y",
+            layer="above"
+        )
+
+        config = {
+            "editable": True,
+            "edits": {"annotationPosition": True},
+        }
+
+        st.plotly_chart(
+            fig_int,
+            use_container_width=True,
+            config=config,
+            key=f"plotly_chart__{key_prefix}"
+        )
+
+    return fig
+
+
+# =========================================================
+# Exportação dos mapas estáticos para PowerPoint
+# =========================================================
+def _gerar_pptx_mapas(figuras):
+    """
+    Recebe uma lista de tuplas (titulo, fig_matplotlib), na mesma ordem em
+    que os mapas foram gerados na tela, e monta uma apresentação
+    PowerPoint com um slide por mapa (título + imagem do mapa estático).
+    Retorna um BytesIO pronto para download.
+    """
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+    layout_em_branco = prs.slide_layouts[6]
+
+    for titulo, fig in figuras:
+        slide = prs.slides.add_slide(layout_em_branco)
+
+        caixa_titulo = slide.shapes.add_textbox(
+            Inches(0.5), Inches(0.3), Inches(12.3), Inches(0.8)
+        )
+        tf = caixa_titulo.text_frame
+        tf.text = titulo
+        tf.paragraphs[0].font.size = Pt(28)
+        tf.paragraphs[0].font.bold = True
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+        buf.seek(0)
+        slide.shapes.add_picture(buf, Inches(1.8), Inches(1.3), height=Inches(5.7))
+
+    saida = io.BytesIO()
+    prs.save(saida)
+    saida.seek(0)
+    return saida
 
 
 # =========================================================
@@ -1365,10 +1435,13 @@ def analise_correspondencia_multipla(dados):
         dados, variavel_principal
     )
 
+    figuras_geradas = []
+
     for var_secundaria in variaveis_secundarias:
         key_prefix = f"{variavel_principal}__{var_secundaria}"
-        with st.expander(f"{variavel_principal} x {var_secundaria}", expanded=True):
-            _renderizar_mapa_correspondencia(
+        titulo_mapa = f"{variavel_principal} x {var_secundaria}"
+        with st.expander(titulo_mapa, expanded=True):
+            fig = _renderizar_mapa_correspondencia(
                 dados,
                 variavel_principal,
                 var_secundaria,
@@ -1376,6 +1449,53 @@ def analise_correspondencia_multipla(dados):
                 key_rotulos_linhas,
                 key_deslocamentos_linhas,
             )
+        if fig is not None:
+            figuras_geradas.append((var_secundaria, fig))
+
+    if figuras_geradas:
+        st.markdown("---")
+        st.subheader("Exportar mapas")
+
+        if not PPTX_AVAILABLE:
+            st.warning(
+                "A biblioteca 'python-pptx' não está instalada neste ambiente "
+                f"({PPTX_IMPORT_ERROR}). Adicione 'python-pptx' ao "
+                "requirements.txt para habilitar a exportação em PowerPoint."
+            )
+        else:
+            st.caption(
+                f"{len(figuras_geradas)} mapa(s) estático(s) serão exportados, "
+                "um por slide, na mesma ordem em que foram gerados acima."
+            )
+
+            titulo_principal_pptx = st.text_input(
+                "Qual título você quer colocar na variável principal "
+                f"(variável selecionada no início do app, '{variavel_principal}')?",
+                value=_rotulo_amigavel(variavel_principal),
+                key=f"titulo_pptx_principal__{variavel_principal}"
+            )
+
+            if st.button("Gerar PowerPoint com todos os mapas", key="gerar_pptx_multi"):
+                figuras_com_titulo = [
+                    (f"{titulo_principal_pptx} x {_rotulo_amigavel(var_secundaria)}", fig)
+                    for var_secundaria, fig in figuras_geradas
+                ]
+                with st.spinner("Montando a apresentação..."):
+                    pptx_buffer = _gerar_pptx_mapas(figuras_com_titulo)
+                st.session_state["pptx_mapas_bytes"] = pptx_buffer.getvalue()
+                st.success("PowerPoint gerado! Use o botão abaixo para baixar.")
+
+            if "pptx_mapas_bytes" in st.session_state:
+                st.download_button(
+                    label="Baixar PowerPoint",
+                    data=st.session_state["pptx_mapas_bytes"],
+                    file_name=f"mapas_correspondencia_{variavel_principal}.pptx",
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument"
+                        ".presentationml.presentation"
+                    ),
+                    key="download_pptx_multi"
+                )
 
 
 # =========================

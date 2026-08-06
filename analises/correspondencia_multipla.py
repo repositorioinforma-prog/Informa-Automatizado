@@ -303,6 +303,71 @@ def _renderizar_mapa_correspondencia(
                     st.session_state[key_deslocamentos_colunas][i] = (dx_tmp[i], dy_tmp[i])
                 st.success("Alterações aplicadas neste mapa.")
 
+    # override de posição da variável principal EXCLUSIVO deste mapa — não
+    # mexe na configuração compartilhada (usada por todos os outros mapas)
+    key_override_linhas = f"deslocamentos_linhas_override__{key_prefix}"
+    if key_override_linhas not in st.session_state:
+        st.session_state[key_override_linhas] = {}
+
+    with st.expander(
+        f"📍 Ajustar posição de '{var_linha}' só neste mapa", expanded=False
+    ):
+        st.caption(
+            "Por padrão, a posição das categorias da variável principal é "
+            "a mesma configurada lá em cima (compartilhada com todos os "
+            "mapas). Aqui você pode desviar a posição só para este "
+            "cruzamento específico, sem afetar os demais — edite o valor "
+            "e clique em Aplicar; não precisa marcar nada a mais."
+        )
+
+        if st.button(
+            "Restaurar posição compartilhada (remover ajustes deste mapa)",
+            key=f"resetar_override_linhas__{key_prefix}"
+        ):
+            st.session_state[key_override_linhas] = {}
+            st.success("Removido — este mapa voltou a usar a posição compartilhada.")
+
+        with st.form(key=f"form_override_linhas__{key_prefix}"):
+            dx_ind_tmp = {}
+            dy_ind_tmp = {}
+
+            for i in coordenadas_linhas.index:
+                if st.session_state[key_rotulos_linhas][i] is None:
+                    continue  # categoria removida na configuração compartilhada
+
+                override_atual = st.session_state[key_override_linhas].get(i)
+                dx_compartilhado, dy_compartilhado = st.session_state[key_deslocamentos_linhas][i]
+                dx_efetivo, dy_efetivo = override_atual if override_atual is not None else (
+                    dx_compartilhado, dy_compartilhado
+                )
+                selo = " (posição individual ativa)" if override_atual is not None else ""
+
+                col1, col2, col3 = st.columns([1, 1, 1])
+                with col1:
+                    st.write(f"'{i}'{selo}")
+                with col2:
+                    dx_ind_tmp[i] = st.number_input(
+                        "Δx (só aqui)", min_value=-1.0, max_value=1.0,
+                        value=float(dx_efetivo), step=0.01, format="%.2f",
+                        key=f"desloc_x_override_linha__{key_prefix}__{i}"
+                    )
+                with col3:
+                    dy_ind_tmp[i] = st.number_input(
+                        "Δy (só aqui)", min_value=-1.0, max_value=1.0,
+                        value=float(dy_efetivo), step=0.01, format="%.2f",
+                        key=f"desloc_y_override_linha__{key_prefix}__{i}"
+                    )
+
+            aplicar_override = st.form_submit_button("Aplicar só neste mapa")
+
+            if aplicar_override:
+                for i in dx_ind_tmp:
+                    st.session_state[key_override_linhas][i] = (dx_ind_tmp[i], dy_ind_tmp[i])
+                st.success(
+                    "Posição individual aplicada só neste mapa — os demais "
+                    "cruzamentos continuam usando a posição compartilhada."
+                )
+
     max_deslocamento = 0.05
     pontos_linhas = []
     pontos_colunas = []
@@ -312,7 +377,8 @@ def _renderizar_mapa_correspondencia(
             continue
         x = row.iloc[0]
         y = row.iloc[1]
-        dx, dy = st.session_state[key_deslocamentos_linhas][i]
+        override = st.session_state[key_override_linhas].get(i)
+        dx, dy = override if override is not None else st.session_state[key_deslocamentos_linhas][i]
         dx = max(-max_deslocamento, min(max_deslocamento, dx * (x / abs(x) if x != 0 else 1)))
         dy = max(-max_deslocamento, min(max_deslocamento, dy * (y / abs(y) if y != 0 else 1)))
         pontos_linhas.append({

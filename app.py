@@ -3,13 +3,12 @@ Ponto de entrada do app. Responsável por: configuração da página,
 CSS/tema visual, logo, e o roteamento entre os módulos de análise
 (menu lateral). A lógica de cada análise mora em core/ e analises/.
 """
-from io import BytesIO
+import os
 
-import requests
 import streamlit as st
-from PIL import Image
 
 from analises.base_reduzida import processador_base_reduzida
+from analises.base_multiplas import modulo_base_multiplas
 from analises.exclusoes import modulo_exclusoes
 from analises.correspondencia_multipla import analise_correspondencia_multipla
 from analises.correspondencia_simples import analise_correspondencia
@@ -216,23 +215,12 @@ st.markdown(
 # =========================
 # Logo
 # =========================
-url = "https://institutoinforma.com.br/wp-content/uploads/2025/01/logo_informa.webp"
-headers = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/110.0.0.0 Safari/537.36"
-    )
-}
+LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo.jpg")
 
-try:
-    response = requests.get(url, headers=headers, timeout=20)
-    response.raise_for_status()
-    image_bytes = BytesIO(response.content)
-    logo = Image.open(image_bytes)
-    st.image(logo, width=300)
-except Exception:
-    st.warning("Não foi possível carregar a logo do sistema.")
+if os.path.exists(LOGO_PATH):
+    st.image(LOGO_PATH, width=300)
+else:
+    st.warning("Não foi possível carregar a logo do sistema (arquivo não encontrado).")
 
 
 # =========================
@@ -247,6 +235,7 @@ def main():
             "Mapas de Correspondência (Múltiplas Variáveis)",
             "Processador de Base Reduzida",
             "Exclusões",
+            "Base nas Múltiplas",
         ),
     )
 
@@ -257,6 +246,10 @@ def main():
 
     if analise == "Exclusões":
         modulo_exclusoes()
+        return
+
+    if analise == "Base nas Múltiplas":
+        modulo_base_multiplas()
         return
 
     uploaded_file = st.file_uploader("Carregar Arquivo", type=["csv", "xlsx", "sav"])

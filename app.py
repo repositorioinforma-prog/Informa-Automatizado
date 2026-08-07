@@ -9,6 +9,8 @@ import streamlit as st
 
 from analises.base_reduzida import processador_base_reduzida
 from analises.base_multiplas import modulo_base_multiplas
+from analises.legendas import modulo_legendas
+from analises.relatorio_automatizado import modulo_relatorio_automatizado
 from analises.exclusoes import modulo_exclusoes
 from analises.correspondencia_multipla import analise_correspondencia_multipla
 from analises.correspondencia_simples import analise_correspondencia
@@ -236,6 +238,8 @@ def main():
             "Processador de Base Reduzida",
             "Exclusões",
             "Base nas Múltiplas",
+            "Legendas",
+            "Relatório Automatizado",
         ),
     )
 
@@ -250,6 +254,14 @@ def main():
 
     if analise == "Base nas Múltiplas":
         modulo_base_multiplas()
+        return
+
+    if analise == "Legendas":
+        modulo_legendas()
+        return
+
+    if analise == "Relatório Automatizado":
+        modulo_relatorio_automatizado()
         return
 
     uploaded_file = st.file_uploader("Carregar Arquivo", type=["csv", "xlsx", "sav"])

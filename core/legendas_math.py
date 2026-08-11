@@ -129,9 +129,12 @@ def parsear_blocos_legenda(caminho_ou_arquivo, aba=None):
     isso, o openpyxl achata a célula toda para texto simples e o negrito
     se perde.
 
-    Retorna uma lista de dicts: {"itens": [...], "rotulo": str|None} —
-    'rotulo' é o texto normalizado depois de 'LEGENDA' (None se o
-    cabeçalho for só 'LEGENDA', sem nada depois). Cada item pode ser uma
+    Retorna uma lista de dicts: {"itens": [...], "rotulo": str|None,
+    "rotulo_original": str|None} — 'rotulo' é o texto normalizado depois
+    de 'LEGENDA' (usado só pra comparação/pareamento), 'rotulo_original'
+    é o texto exatamente como está escrito no arquivo (usado pra
+    reescrever o cabeçalho no relatório de saída). Ambos None se o
+    cabeçalho for só 'LEGENDA', sem nada depois. Cada item pode ser uma
     string simples ou um CellRichText (preserva os trechos em negrito).
     """
     wb = openpyxl.load_workbook(caminho_ou_arquivo, rich_text=True)
@@ -142,28 +145,38 @@ def parsear_blocos_legenda(caminho_ou_arquivo, aba=None):
     i = 0
 
     def _rotulo_legenda(texto):
-        """Se 'texto' começa com 'LEGENDA', devolve o rótulo normalizado depois dela (ou None)."""
+        """Se 'texto' começa com 'LEGENDA', devolve (rótulo_normalizado,
+        rótulo_original, True) — ou (None, None, False) se não for uma
+        linha de cabeçalho de legenda. O original é preservado (não só o
+        normalizado) porque precisamos reescrever exatamente esse texto
+        de volta no relatório de saída (ex.: "LEGENDA REGIÕES"), e a
+        versão normalizada (sem acento/caixa, só pra comparação) ficaria
+        ilegível se usada pra exibição."""
         t = texto.strip().upper()
         if not t.startswith("LEGENDA"):
-            return None, False
+            return None, None, False
         resto = texto.strip()[len("LEGENDA"):].strip()
-        return (normalizar_texto(resto) if resto else None), True
+        rotulo_original = resto if resto else None
+        rotulo_norm = normalizar_texto(resto) if resto else None
+        return rotulo_norm, rotulo_original, True
 
     while i < n:
         primeiro = linhas[i][0] if linhas[i] else None
-        rotulo, eh_legenda = _rotulo_legenda(primeiro) if isinstance(primeiro, str) else (None, False)
+        rotulo, rotulo_original, eh_legenda = (
+            _rotulo_legenda(primeiro) if isinstance(primeiro, str) else (None, None, False)
+        )
         if eh_legenda:
             i += 1
             itens = []
             while i < n and not _eh_linha_vazia(linhas[i]):
                 v = linhas[i][0]
-                _, v_eh_legenda = _rotulo_legenda(v) if isinstance(v, str) else (None, False)
+                _, _, v_eh_legenda = _rotulo_legenda(v) if isinstance(v, str) else (None, None, False)
                 if v_eh_legenda:
                     break
                 if v is not None:
                     itens.append(v)
                 i += 1
-            blocos.append({"itens": itens, "rotulo": rotulo})
+            blocos.append({"itens": itens, "rotulo": rotulo, "rotulo_original": rotulo_original})
         else:
             i += 1
 
@@ -311,13 +324,38 @@ def gerar_workbook_com_legendas(caminho_tabela, pares, aba=None):
     """
     from copy import copy as _copy_style
 
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
     from openpyxl.styles import Alignment, Font
+    from openpyxl.styles.colors import Color
+
+    def _forcar_cor_preta(item):
+        """
+        Reconstrói um item de legenda forçando a cor do texto pra preto
+        explícito (RGB), em vez de deixar uma cor referenciada por TEMA
+        (theme=N) — cores de tema são relativas ao arquivo: o mesmo
+        índice de tema pode ser preto no arquivo de legendas de origem e
+        virar outra cor (ex.: laranja) no relatório de destino, porque
+        cada workbook tem sua própria paleta de tema. Preserva
+        negrito/itálico de cada trecho, só troca a cor.
+        """
+        if not isinstance(item, CellRichText):
+            return item
+        novos_blocos = []
+        for bloco in item:
+            if isinstance(bloco, TextBlock):
+                nova_fonte = _copy_style(bloco.font) if bloco.font else None
+                if nova_fonte is not None:
+                    nova_fonte.color = Color(rgb="FF000000")
+                novos_blocos.append(TextBlock(nova_fonte, bloco.text))
+            else:
+                novos_blocos.append(bloco)
+        return CellRichText(novos_blocos)
 
     wb = openpyxl.load_workbook(caminho_tabela, rich_text=True)
     nome_aba = aba or wb.sheetnames[0]
     ws = wb[nome_aba]
 
-    font_item = Font(name="DIN Book", size=9, bold=False)
+    font_item = Font(name="DIN Book", size=9, bold=False, color="FF000000")
     alinhamento_esquerda = Alignment(horizontal="left")
 
     # (linha a manter como está, itens de legenda, linha do título do
@@ -328,10 +366,10 @@ def gerar_workbook_com_legendas(caminho_tabela, pares, aba=None):
     insercoes = []
     for bt, bl in pares:
         if bt["linha_pergunta"]:
-            insercoes.append((bt["linha_pergunta"] + 1, bl["itens"], bt["titulo_idx"]))
+            insercoes.append((bt["linha_pergunta"] + 1, bl["itens"], bt["titulo_idx"], bl.get("rotulo_original")))
     insercoes.sort(key=lambda x: x[0], reverse=True)
 
-    for linha_manter, itens, titulo_idx in insercoes:
+    for linha_manter, itens, titulo_idx, rotulo_original in insercoes:
         linha_insercao = linha_manter + 1
         n_novas_linhas = len(itens) + 2  # "LEGENDA" + itens + 1 linha em branco no final
 
@@ -383,15 +421,23 @@ def gerar_workbook_com_legendas(caminho_tabela, pares, aba=None):
         cel_titulo_ref = ws.cell(row=titulo_idx, column=1)
 
         r = linha_insercao
-        cel_legenda = ws.cell(row=r, column=1, value="LEGENDA")
+        texto_cabecalho = f"LEGENDA {rotulo_original}" if rotulo_original else "LEGENDA"
+        cel_legenda = ws.cell(row=r, column=1, value=texto_cabecalho)
         cel_legenda.font = _copy_style(cel_titulo_ref.font)
         cel_legenda.alignment = alinhamento_esquerda
         r += 1
 
         for item in itens:
-            cel_item = ws.cell(row=r, column=1, value=item)
+            item_normalizado = _forcar_cor_preta(item)
+            cel_item = ws.cell(row=r, column=1, value=item_normalizado)
             cel_item.font = font_item
-            cel_item.alignment = alinhamento_esquerda
+            # Linhas de continuação (sem o prefixo em negrito "Região X
+            # (%): ", ou seja, texto simples em vez de rich text) ficam
+            # visualmente recuadas, igual ao arquivo de legendas de
+            # origem — usa o recuo nativo do Excel (não espaços no
+            # início do texto, que ficariam ali se alguém copiar/colar).
+            eh_continuacao = not isinstance(item_normalizado, CellRichText)
+            cel_item.alignment = Alignment(horizontal="left", indent=1) if eh_continuacao else alinhamento_esquerda
             r += 1
         # a última linha inserida (r) fica em branco de propósito —
         # espaçamento antes do restante do arquivo continuar

@@ -11,7 +11,10 @@ from analises.base_reduzida import processador_base_reduzida
 from analises.base_multiplas import modulo_base_multiplas
 from analises.legendas import modulo_legendas
 from analises.relatorio_automatizado import modulo_relatorio_automatizado
+from analises.codigos_individuais import modulo_codigos_individuais
 from analises.exclusoes import modulo_exclusoes
+from analises.gerador_amostra import modulo_gerador_amostra
+from analises.ponderacao import modulo_ponderacao
 from analises.correspondencia_multipla import analise_correspondencia_multipla
 from analises.correspondencia_simples import analise_correspondencia
 from core.dados import carregar_dados
@@ -145,6 +148,34 @@ st.markdown(
         background-color: #eff6ff !important;
     }
 
+    /* header do Streamlit (barra fina no topo da página) — elemento
+       separado da sidebar, mantém o tema escuro padrão do Streamlit por
+       fora do nosso CSS. Força fundo e texto/ícones claros nele. */
+    [data-testid="stHeader"] {
+        background-color: var(--sidebar-bg) !important;
+    }
+
+    [data-testid="stHeader"] * {
+        color: #f9fafb !important;
+    }
+
+    /* Ícones de recolher/expandir a sidebar ("»"/"«"), tanto no header
+       (sidebar fechada) quanto dentro da própria sidebar (aberta).
+       Só ajusta a cor do preenchimento (fill) — NÃO mexe em "stroke",
+       pois forçar as duas juntas apaga o desenho interno do ícone
+       (contorno e preenchimento ficam iguais, virando um bloco sólido
+       sem forma reconhecível). Cor levemente suave (não branco puro)
+       pra não pesar visualmente. */
+    [data-testid="stHeader"] svg,
+    [data-testid="stSidebar"] button svg {
+        fill: #e5e7eb !important;
+    }
+
+    [data-testid="stHeader"] button:hover svg,
+    [data-testid="stSidebar"] button:hover svg {
+        fill: var(--accent) !important;
+    }
+
     /* checkboxes e radios dentro da sidebar (fundo escuro) */
     [data-testid="stSidebar"] [data-testid="stCheckbox"] label,
     [data-testid="stSidebar"] [data-testid="stRadio"] label {
@@ -240,6 +271,9 @@ def main():
             "Base nas Múltiplas",
             "Legendas",
             "Relatório Automatizado",
+            "Códigos Individuais",
+            "Gerador de Amostra",
+            "Ponderação",
         ),
     )
 
@@ -262,6 +296,18 @@ def main():
 
     if analise == "Relatório Automatizado":
         modulo_relatorio_automatizado()
+        return
+
+    if analise == "Códigos Individuais":
+        modulo_codigos_individuais()
+        return
+
+    if analise == "Gerador de Amostra":
+        modulo_gerador_amostra()
+        return
+
+    if analise == "Ponderação":
+        modulo_ponderacao()
         return
 
     uploaded_file = st.file_uploader("Carregar Arquivo", type=["csv", "xlsx", "sav"])

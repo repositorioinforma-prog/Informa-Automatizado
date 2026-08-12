@@ -22,7 +22,7 @@ import openpyxl
 import streamlit as st
 
 from core.planilha_utils import worksheet_para_html
-from core.pdf_preview import gerar_pdf_preview, libreoffice_disponivel
+from core.pdf_preview import gerar_pdf_preview, wkhtmltopdf_disponivel
 from core.cabecalho_imagem import inserir_imagem_cabecalho
 from core.cabecalho_correcao_math import parsear_blocos_cabecalho_referencia, aplicar_codigo_13
 from core.capas_resultados_math import aplicar_codigo_15
@@ -221,7 +221,7 @@ def modulo_codigos_individuais():
 
         st.subheader("Pré-visualização do resultado")
 
-        if libreoffice_disponivel():
+        if wkhtmltopdf_disponivel():
             if st.button("📄 Gerar pré-visualização em PDF (relatório inteiro)", key="ci_gerar_pdf_preview"):
                 with st.spinner("Convertendo o relatório inteiro pra PDF — pode levar alguns segundos..."):
                     try:
@@ -246,7 +246,7 @@ def modulo_codigos_individuais():
         else:
             st.caption(
                 "⚠️ Pré-visualização em PDF não disponível neste ambiente "
-                "(LibreOffice não está instalado)."
+                "(wkhtmltopdf não está instalado)."
             )
 
         with st.expander("Pré-visualização rápida em tabela (mais leve, só valores aproximados)"):

@@ -329,6 +329,119 @@ def _formatar_valor_preview(valor):
     return str(valor)
 
 
+def worksheet_para_html_paginado(ws):
+    """
+    Como `worksheet_para_html`, mas sem truncar linhas/colunas (o
+    relatório inteiro) e dividido em UMA TABELA HTML POR PÁGINA (nas
+    mesmas linhas onde a planilha tem uma quebra de página manual),
+    cada uma dentro de uma <div> com quebra de página — pensado pra
+    virar um PDF paginado de verdade (ver core/pdf_preview.py).
+
+    Importante: a quebra de página é aplicada na <div> que envolve cada
+    tabela, NÃO num <tr> dentro de uma tabela única — "page-break-before"
+    em linha de tabela não é respeitado de forma confiável por praticamente
+    nenhum motor de renderização HTML->PDF (é uma limitação conhecida de
+    CSS, não só do wkhtmltopdf), por isso cada página vira sua própria
+    tabela HTML independente.
+
+    Returns:
+        str de HTML completo (com <html>/<head>/<body>, já pronto pra
+        passar direto pro conversor de PDF).
+    """
+    total_linhas = ws.max_row
+    total_colunas = ws.max_column
+
+    celulas_cobertas = set()
+    spans = {}
+    for rng in ws.merged_cells.ranges:
+        spans[(rng.min_row, rng.min_col)] = (
+            rng.max_row - rng.min_row + 1, rng.max_col - rng.min_col + 1
+        )
+        for r in range(rng.min_row, rng.max_row + 1):
+            for c in range(rng.min_col, rng.max_col + 1):
+                if (r, c) != (rng.min_row, rng.min_col):
+                    celulas_cobertas.add((r, c))
+
+    larguras_px = []
+    largura_padrao = ws.sheet_format.defaultColWidth or 8.43
+    for c in range(1, total_colunas + 1):
+        letra = get_column_letter(c)
+        dim = ws.column_dimensions.get(letra)
+        largura = dim.width if (dim and dim.width) else largura_padrao
+        larguras_px.append(max(20, round(largura * 6.2)))
+    colgroup = "".join(f'<col style="width:{w}px;">' for w in larguras_px)
+
+    # pontos onde uma nova página começa (linha 1-based) — a partir das
+    # quebras de página manuais já presentes na planilha
+    inicios_pagina = sorted({b.id + 1 for b in ws.row_breaks.brk if b.id is not None})
+    limites = [1] + [i for i in inicios_pagina if i > 1] + [total_linhas + 1]
+    limites = sorted(set(limites))
+
+    def _renderizar_linha(r):
+        celulas_html = []
+        for c in range(1, total_colunas + 1):
+            if (r, c) in celulas_cobertas:
+                continue
+            cel = ws.cell(row=r, column=c)
+            texto = _formatar_valor_preview(cel.value)
+            texto = (
+                texto.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\n", "<br>")
+            )
+            attrs = ""
+            span_r, span_c = spans.get((r, c), (1, 1))
+            if span_r > 1:
+                attrs += f' rowspan="{span_r}"'
+            if span_c > 1:
+                attrs += f' colspan="{span_c}"'
+            estilo = _estilo_celula_css(cel)
+            celulas_html.append(f'<td style="{estilo}"{attrs}>{texto}</td>')
+        dim_linha = ws.row_dimensions.get(r)
+        altura_px = round((dim_linha.height or 15) * 1.1) if dim_linha else 17
+        return f'<tr style="height:{altura_px}px;">{"".join(celulas_html)}</tr>'
+
+    paginas_html = []
+    for i in range(len(limites) - 1):
+        inicio_pag, fim_pag = limites[i], limites[i + 1] - 1
+        linhas_da_pagina = [
+            _renderizar_linha(r) for r in range(inicio_pag, fim_pag + 1)
+            if any((r, c) not in celulas_cobertas for c in range(1, total_colunas + 1))
+            or True  # inclui mesmo linhas "vazias" (mantém espaçamento do layout original)
+        ]
+        if not any(ws.cell(row=r, column=c).value not in (None, "") for r in range(inicio_pag, fim_pag + 1) for c in range(1, total_colunas + 1)):
+            # página inteiramente vazia (ex.: páginas em branco antes de uma capa) —
+            # ainda assim gera uma <div> própria, só que sem tabela dentro,
+            # pra manter a contagem/posição de páginas do PDF fiel ao original
+            paginas_html.append('<div class="pagina"></div>')
+            continue
+        tabela = (
+            f'<table><colgroup>{colgroup}</colgroup>'
+            f'<tbody>{"".join(linhas_da_pagina)}</tbody></table>'
+        )
+        paginas_html.append(f'<div class="pagina">{tabela}</div>')
+
+    orientacao = (ws.page_setup.orientation or "portrait") if ws.page_setup else "portrait"
+
+    return f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page {{ size: A4 {orientacao}; margin: 10mm; }}
+  body {{ margin: 0; }}
+  .pagina {{ page-break-after: always; }}
+  .pagina:last-child {{ page-break-after: avoid; }}
+  table {{ border-collapse: collapse; font-family: Calibri, Arial, sans-serif;
+           font-size: 10px; table-layout: fixed; width: 100%; }}
+  td {{ overflow: hidden; }}
+</style>
+</head>
+<body>
+  {"".join(paginas_html)}
+</body>
+</html>"""
+
+
 def worksheet_para_html(ws, max_linhas=150, max_colunas=30):
     """
     Gera uma tabela HTML que imita a aparência real da planilha no Excel:

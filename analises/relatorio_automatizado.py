@@ -24,8 +24,15 @@ import openpyxl
 import streamlit as st
 
 from core.legendas_math import parsear_legenda_por_chave, aplicar_legendas_por_chave
+from core.base_multiplas_math import (
+    parsear_blocos,
+    extrair_bases,
+    calcular_linhas_base,
+    gerar_workbook_com_base,
+    bloco_eh_religiao,
+)
 from core.planilha_utils import worksheet_para_html
-from core.pdf_preview import gerar_pdf_preview, libreoffice_disponivel
+from core.pdf_preview import gerar_pdf_preview, wkhtmltopdf_disponivel
 from core.cabecalho_imagem import inserir_imagem_cabecalho
 from core.cabecalho_correcao_math import parsear_blocos_cabecalho_referencia, aplicar_codigo_13
 from core.capas_resultados_math import aplicar_codigo_15
@@ -129,6 +136,7 @@ def _aplicar_sequencia(passos):
 # "if etapa == ..." abaixo). Etapas de tela pura (aviso/upload) ficam de
 # fora da contagem, já que não envolvem processamento.
 _ETAPAS_COM_PROGRESSO = [
+    ("base_multiplas", "Base nas Múltiplas"),
     ("origem", "Preenche células / bordas (01-02)"),
     ("novos_termos", "Ordenar tabelas (03)"),
     ("codigo_04", "Formatação de rótulos (04)"),
@@ -193,12 +201,103 @@ def modulo_relatorio_automatizado():
             st.session_state["ra_wb_bytes"] = arquivo.read()
             st.session_state["ra_nome_arquivo"] = arquivo.name
             _log("Relatório carregado.")
-            _ir_para("origem")
+            _ir_para("base_multiplas")
         return
 
     # A partir daqui, sempre existe um arquivo em andamento em
     # st.session_state["ra_wb_bytes"] — mostramos isso pra situar a pessoa
     st.caption(f"Arquivo em andamento: **{st.session_state.get('ra_nome_arquivo', '?')}**")
+
+    # ---------------------------------------------------------------
+    if etapa == "base_multiplas":
+        st.subheader("Base nas Múltiplas")
+        st.caption(
+            "Tabelas de Múltipla Escolha não saem do SPSS com a linha de "
+            "Base. Se o relatório carregado tiver alguma, envie um "
+            "arquivo com base (qualquer pergunta do mesmo projeto que já "
+            "tenha 'Base') pra copiar a linha certa em cada tabela de "
+            "múltiplas — casando pelo texto do cabeçalho, não pela "
+            "posição da coluna. Se não tiver tabela de múltiplas, pode "
+            "pular direto."
+        )
+        arquivo_bases = st.file_uploader(
+            "Relatório com base (opcional)", type=["xlsx"], key="ra_upload_bases_multiplas"
+        )
+
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            aplicar_bm = st.button(
+                "Aplicar e continuar", key="ra_bm_aplicar", disabled=arquivo_bases is None
+            )
+        with col2:
+            pular_bm = st.button("Este relatório não tem Múltiplas", key="ra_bm_pular")
+
+        if pular_bm:
+            _log("Base nas Múltiplas: etapa pulada.")
+            _ir_para("origem")
+            return
+
+        if aplicar_bm and arquivo_bases is not None:
+            with st.spinner("Lendo e casando as tabelas..."):
+                try:
+                    blocos_multiplas = parsear_blocos(io.BytesIO(st.session_state["ra_wb_bytes"]))
+                    blocos_bases = parsear_blocos(arquivo_bases)
+                except Exception as e:
+                    st.error(f"Não foi possível ler os arquivos: {e}")
+                    return
+
+                if not blocos_multiplas:
+                    st.error(
+                        "Não encontrei nenhum bloco 'Titulo:' no relatório "
+                        "carregado. Confirme se ele segue o formato padrão "
+                        "de exportação do SPSS."
+                    )
+                    return
+                if not blocos_bases:
+                    st.error(
+                        "Não encontrei nenhum bloco 'Titulo:' no relatório "
+                        "com base. Confirme se esse é o arquivo certo."
+                    )
+                    return
+
+                base_total, por_par, por_categoria, por_grupo_sem_categoria = extrair_bases(blocos_bases)
+                if base_total is None:
+                    st.error(
+                        "Não encontrei nenhuma linha 'Base' no relatório "
+                        "com base. Confirme se esse é o arquivo certo."
+                    )
+                    return
+
+                blocos_religiao_bases = [b for b in blocos_bases if bloco_eh_religiao(b)]
+                indice_religiao = None
+                if blocos_religiao_bases:
+                    indice_religiao = extrair_bases(blocos_bases, apenas_blocos=blocos_religiao_bases)[1:]
+
+                linhas_base = calcular_linhas_base(
+                    blocos_multiplas, base_total, por_par, por_categoria, por_grupo_sem_categoria,
+                    indice_religiao=indice_religiao,
+                )
+
+                wb_novo = gerar_workbook_com_base(
+                    io.BytesIO(st.session_state["ra_wb_bytes"]), blocos_multiplas, linhas_base
+                )
+                saida = io.BytesIO()
+                wb_novo.save(saida)
+                st.session_state["ra_wb_bytes"] = saida.getvalue()
+
+            n_ja_tinham = sum(1 for lb in linhas_base if lb.get("ja_tinha_base"))
+            n_religiao = sum(1 for lb in linhas_base if lb.get("eh_religiao"))
+            total_nao_encontradas = sum(len(lb["nao_encontradas"]) for lb in linhas_base)
+            msg = f"Base nas Múltiplas: {len(blocos_multiplas)} tabela(s) no total"
+            if n_ja_tinham:
+                msg += f", {n_ja_tinham} já tinha(m) base"
+            if n_religiao:
+                msg += f", {n_religiao} de religião (casamento restrito)"
+            if total_nao_encontradas:
+                msg += f", {total_nao_encontradas} coluna(s) sem base correspondente"
+            _log(msg + ".")
+            _ir_para("origem")
+        return
 
     # ---------------------------------------------------------------
     if etapa == "origem":
@@ -424,13 +523,6 @@ def modulo_relatorio_automatizado():
     if etapa == "codigo_14":
         st.subheader("Cabeçalho/rodapé de impressão fixos (código 14)")
         st.caption("Aplica o aviso legal fixo no cabeçalho e o número de página no rodapé.")
-        incluir_logo = st.checkbox(
-            "⚠️ [Experimental] Incluir o logo no canto superior direito de toda "
-            "página (5 cm de largura) — não confirmado que funciona no Excel de "
-            "verdade; se o arquivo vier sem a imagem, é só baixar de novo sem "
-            "marcar esta opção",
-            value=False, key="ra_incluir_logo_14",
-        )
         if st.button("Aplicar e continuar", key="ra_codigo14_continuar"):
             _aplicar_sequencia([
                 {
@@ -438,15 +530,6 @@ def modulo_relatorio_automatizado():
                     "no_workbook": True,
                 },
             ])
-            if incluir_logo:
-                caminho_logo = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "logo.jpg"
-                )
-                st.session_state["ra_wb_bytes"] = inserir_imagem_cabecalho(
-                    st.session_state["ra_wb_bytes"], caminho_logo, largura_cm=5.0, posicao="R",
-                    aplicar_em_todas_abas=True,
-                )
-                _log("Logo incluído no cabeçalho de impressão (5 cm de largura, canto superior direito).")
             _ir_para("codigo_15")
         return
 
@@ -490,6 +573,32 @@ def modulo_relatorio_automatizado():
         for linha in st.session_state.get("ra_log", []):
             st.write(f"- {linha}")
 
+        st.subheader("Logo no cabeçalho (opcional)")
+        st.caption(
+            "⚠️ [Experimental] Precisa ser o ÚLTIMO passo antes de baixar — "
+            "qualquer código que rode depois faz o Excel reabrir e resalvar "
+            "o arquivo, e como o formato de imagem em cabeçalho é um "
+            "recurso legado que o openpyxl não entende, ele descarta a "
+            "imagem silenciosamente se algo mais mexer no arquivo depois "
+            "dela. Por isso só aparece aqui agora, no fim de tudo."
+        )
+        if not st.session_state.get("ra_logo_aplicado"):
+            if st.button(
+                "🖼️ Adicionar logo ao arquivo final (5 cm, canto superior direito)",
+                key="ra_aplicar_logo_final",
+            ):
+                caminho_logo = os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "logo.jpg"
+                )
+                st.session_state["ra_wb_bytes"] = inserir_imagem_cabecalho(
+                    st.session_state["ra_wb_bytes"], caminho_logo, largura_cm=5.0, posicao="R",
+                    aplicar_em_todas_abas=True,
+                )
+                st.session_state["ra_logo_aplicado"] = True
+                st.rerun()
+        else:
+            st.caption("✅ Logo já aplicado a este arquivo — baixe abaixo.")
+
         st.download_button(
             "Baixar relatório processado",
             data=st.session_state["ra_wb_bytes"],
@@ -500,7 +609,7 @@ def modulo_relatorio_automatizado():
 
         st.subheader("Pré-visualização do resultado")
 
-        if libreoffice_disponivel():
+        if wkhtmltopdf_disponivel():
             if st.button("📄 Gerar pré-visualização em PDF (relatório inteiro)", key="ra_gerar_pdf_preview"):
                 with st.spinner("Convertendo o relatório inteiro pra PDF — pode levar alguns segundos..."):
                     try:
@@ -525,7 +634,7 @@ def modulo_relatorio_automatizado():
         else:
             st.caption(
                 "⚠️ Pré-visualização em PDF não disponível neste ambiente "
-                "(LibreOffice não está instalado)."
+                "(wkhtmltopdf não está instalado)."
             )
 
         with st.expander("Pré-visualização rápida em tabela (mais leve, só valores aproximados)"):

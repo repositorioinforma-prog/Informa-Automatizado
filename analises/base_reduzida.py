@@ -1,6 +1,15 @@
 """
 Processador de Base Reduzida.
 
+Remove, de cada tabela do arquivo, as colunas cuja "Base reduzida" seja
+menor que o limite escolhido — preservando a formatação original E as
+mesclagens de cabeçalho (ex.: um título "Regiões" mesclado sobre várias
+colunas de região encolhe pra cobrir só as colunas que sobraram).
+
+Reaproveita o mesmo motor usado pelo código 05 do Relatório Automatizado
+(core/planilha_utils.py::excluir_colunas_base_reduzida) — mesma lógica
+testada nos dois lugares, em vez de duas implementações separadas.
+
 Diferente das análises de correspondência, não depende do `dados`
 (pandas) carregado no início do app: trabalha direto com o Workbook do
 openpyxl (para preservar formatação original), então tem upload de
@@ -8,138 +17,143 @@ arquivo próprio.
 """
 import io
 import zipfile
-from copy import copy
 
 import openpyxl
 import streamlit as st
 
-
-def _copiar_celula_base_reduzida(origem, destino):
-    """Copia valor e estilo (fonte, borda, preenchimento etc.) de uma célula para outra."""
-    destino.value = origem.value
-    if origem.has_style:
-        destino.font = copy(origem.font)
-        destino.border = copy(origem.border)
-        destino.fill = copy(origem.fill)
-        destino.number_format = copy(origem.number_format)
-        destino.protection = copy(origem.protection)
-        destino.alignment = copy(origem.alignment)
+from core.planilha_utils import (
+    encontrar_inicio_bloco,
+    encontrar_fim_bloco,
+    linha_vazia_ate_coluna,
+    normalizar_texto_maiusculo,
+    excluir_colunas_base_reduzida,
+)
 
 
-def _processar_tabelas_base_reduzida(wb, aba_original):
+def _dividir_em_blocos_de_tabela(ws):
     """
-    Percorre a aba selecionada procurando blocos de tabelas separados por
-    linhas em branco. Em cada tabela, localiza a linha "Base reduzida" e
-    remove as colunas cuja base seja menor que 20. Retorna:
-    - um workbook consolidado com todas as tabelas já filtradas;
-    - uma lista de (nome_arquivo, bytes) com cada tabela filtrada isolada.
+    Varre a aba de cima a baixo identificando blocos de tabela separados
+    por pelo menos uma linha totalmente em branco. Devolve uma lista de
+    (linha_inicio, linha_fim) — 1-based, inclusive nos dois extremos.
+    """
+    max_col = ws.max_column
+    max_row = ws.max_row
+    blocos = []
+
+    r = 1
+    while r <= max_row:
+        if linha_vazia_ate_coluna(ws, r, max_col):
+            r += 1
+            continue
+        inicio = encontrar_inicio_bloco(ws, r, max_col)
+        fim = encontrar_fim_bloco(ws, r, max_col)
+        blocos.append((inicio, fim))
+        r = fim + 1
+
+    return blocos
+
+
+def _copiar_bloco_para(ws_origem, linha_ini, linha_fim, ws_destino, linha_destino_ini):
+    """Copia um intervalo de linhas (valores, estilo e mesclagens internas
+    ao bloco) de uma aba pra outra, começando em `linha_destino_ini`."""
+    from copy import copy as _copy_style
+
+    max_col = ws_origem.max_column
+    offset = linha_destino_ini - linha_ini
+
+    for r in range(linha_ini, linha_fim + 1):
+        for c in range(1, max_col + 1):
+            origem = ws_origem.cell(row=r, column=c)
+            destino = ws_destino.cell(row=r + offset, column=c)
+            destino.value = origem.value
+            if origem.has_style:
+                destino.font = _copy_style(origem.font)
+                destino.border = _copy_style(origem.border)
+                destino.fill = _copy_style(origem.fill)
+                destino.number_format = origem.number_format
+                destino.protection = _copy_style(origem.protection)
+                destino.alignment = _copy_style(origem.alignment)
+        altura = ws_origem.row_dimensions.get(r)
+        if altura and altura.height:
+            ws_destino.row_dimensions[r + offset].height = altura.height
+
+    for rng in ws_origem.merged_cells.ranges:
+        if rng.min_row >= linha_ini and rng.max_row <= linha_fim:
+            ws_destino.merge_cells(
+                start_row=rng.min_row + offset, start_column=rng.min_col,
+                end_row=rng.max_row + offset, end_column=rng.max_col,
+            )
+
+    for c in range(1, max_col + 1):
+        largura = ws_origem.column_dimensions.get(
+            openpyxl.utils.get_column_letter(c)
+        )
+        if largura and largura.width:
+            ws_destino.column_dimensions[openpyxl.utils.get_column_letter(c)].width = largura.width
+
+    return linha_fim - linha_ini + 1  # quantas linhas ocupou no destino
+
+
+def _processar_tabelas_base_reduzida(wb, aba_original, limite=20):
+    """
+    Localiza cada bloco de tabela na aba selecionada, exclui as colunas
+    de "Base reduzida" abaixo do limite (com mesclagem preservada) e
+    devolve:
+        - um workbook consolidado com todas as tabelas já filtradas;
+        - uma lista de (nome_arquivo, BytesIO) com cada tabela isolada.
     """
     ws = wb[aba_original]
+    blocos = _dividir_em_blocos_de_tabela(ws)
+
+    n_blocos_com_base_reduzida = 0
+    for inicio, fim in blocos:
+        tem_base_reduzida = any(
+            normalizar_texto_maiusculo(ws.cell(row=r, column=1).value) == "BASE REDUZIDA"
+            for r in range(inicio, fim + 1)
+        )
+        if tem_base_reduzida:
+            n_blocos_com_base_reduzida += 1
+
+    # a exclusão já detecta os blocos e o limite sozinha, olhando a aba inteira
+    excluir_colunas_base_reduzida(ws, limite=limite)
 
     wb_consolidado = openpyxl.Workbook()
     ws_consolidado = wb_consolidado.active
     ws_consolidado.title = "Consolidado"
 
-    linha_destino = 1
-    max_col = ws.max_column
-    max_row = ws.max_row
-
-    linhas = list(ws.iter_rows(min_row=1, max_row=max_row, max_col=max_col))
-    i = 0
     arquivos_tabelas = []
+    linha_destino = 1
+    for inicio, fim in blocos:
+        n_linhas = _copiar_bloco_para(ws, inicio, fim, ws_consolidado, linha_destino)
+        linha_destino += n_linhas + 1  # +1 = linha em branco entre tabelas
 
-    while i < len(linhas):
-        inicio_bloco_vazio = all(cell.value is None for cell in linhas[i])
-        proxima_preenchida = i + 1 < len(linhas) and any(
-            cell.value is not None for cell in linhas[i + 1]
-        )
-
-        if inicio_bloco_vazio and proxima_preenchida:
-            inicio_tabela = i + 1
-            fim_tabela = inicio_tabela
-
-            while fim_tabela < len(linhas) and any(
-                cell.value is not None for cell in linhas[fim_tabela]
-            ):
-                fim_tabela += 1
-
-            tabela = linhas[inicio_tabela:fim_tabela]
-
-            idx_base = None
-            for idx, linha in enumerate(tabela):
-                if any(
-                    'base reduzida' in str(cell.value).lower()
-                    for cell in linha if cell.value
-                ):
-                    idx_base = idx
-                    break
-
-            if idx_base is not None:
-                colunas_para_excluir = []
-                base_linha = tabela[idx_base]
-                for j in range(1, len(base_linha)):
-                    valor = base_linha[j].value
-                    try:
-                        valor_str = str(valor).replace(',', '.')
-                        limpo = ''.join(
-                            ch for ch in valor_str if ch.isdigit() or ch in ['.', '-']
-                        )
-                        if limpo:
-                            num = float(limpo)
-                            if num < 20:
-                                colunas_para_excluir.append(j)
-                    except Exception:
-                        continue
-
-                for k in range(len(tabela)):
-                    nova_linha = []
-                    for j in range(len(tabela[k])):
-                        if j not in colunas_para_excluir:
-                            nova_linha.append(tabela[k][j])
-                    tabela[k] = nova_linha
-
-                # copia para o consolidado
-                for linha in tabela:
-                    for col_idx, cell in enumerate(linha):
-                        destino = ws_consolidado.cell(row=linha_destino, column=col_idx + 1)
-                        _copiar_celula_base_reduzida(cell, destino)
-                    linha_destino += 1
-                linha_destino += 1  # linha em branco entre tabelas
-
-                # workbook separado só com esta tabela
-                wb_tabela = openpyxl.Workbook()
-                ws_tabela = wb_tabela.active
-                for row_idx, linha in enumerate(tabela, start=1):
-                    for col_idx, cell in enumerate(linha, start=1):
-                        destino = ws_tabela.cell(row=row_idx, column=col_idx)
-                        _copiar_celula_base_reduzida(cell, destino)
-
-                tabela_bytes = io.BytesIO()
-                wb_tabela.save(tabela_bytes)
-                tabela_bytes.seek(0)
-                arquivos_tabelas.append((f"tabela_{inicio_tabela}.xlsx", tabela_bytes))
-
-            i = fim_tabela
-        else:
-            i += 1
+        wb_tabela = openpyxl.Workbook()
+        ws_tabela = wb_tabela.active
+        _copiar_bloco_para(ws, inicio, fim, ws_tabela, 1)
+        tabela_bytes = io.BytesIO()
+        wb_tabela.save(tabela_bytes)
+        tabela_bytes.seek(0)
+        arquivos_tabelas.append((f"tabela_{inicio}.xlsx", tabela_bytes))
 
     consolidado_bytes = io.BytesIO()
     wb_consolidado.save(consolidado_bytes)
     consolidado_bytes.seek(0)
 
-    return consolidado_bytes, arquivos_tabelas
+    return consolidado_bytes, arquivos_tabelas, n_blocos_com_base_reduzida
 
 
 def processador_base_reduzida():
     """
     Tela do Processador de Base Reduzida: upload de um Excel com várias
-    tabelas empilhadas numa aba, remoção das colunas com base < 20 e
-    download da planilha consolidada e/ou das tabelas separadas em .zip.
+    tabelas empilhadas numa aba, remoção das colunas com base abaixo do
+    limite escolhido (preservando mesclagem de cabeçalho) e download da
+    planilha consolidada e/ou das tabelas separadas em .zip.
     """
     st.header("Processador de Base Reduzida")
     st.caption(
         "Remove, de cada tabela do arquivo, as colunas cuja 'Base reduzida' "
-        "seja menor que 20, preservando a formatação original."
+        "seja menor que o limite escolhido, preservando a formatação e as "
+        "mesclagens de cabeçalho originais."
     )
 
     uploaded_file = st.file_uploader(
@@ -150,13 +164,22 @@ def processador_base_reduzida():
         st.info("Envie um arquivo .xlsx para começar.")
         return
 
-    wb = openpyxl.load_workbook(uploaded_file)
+    wb = openpyxl.load_workbook(uploaded_file, rich_text=True)
     abas = wb.sheetnames
-    aba = st.selectbox("Selecione a aba para processar:", abas, key="aba_base_reduzida")
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        aba = st.selectbox("Selecione a aba para processar:", abas, key="aba_base_reduzida")
+    with col2:
+        limite = st.number_input(
+            "Limite da base", min_value=1, value=20, step=1, key="limite_base_reduzida",
+            help="Colunas com 'Base reduzida' menor que este valor são excluídas.",
+        )
 
     if st.button("Processar", key="processar_base_reduzida"):
         with st.spinner("Processando tabelas..."):
-            consolidado_bytes, arquivos_tabelas = _processar_tabelas_base_reduzida(wb, aba)
+            consolidado_bytes, arquivos_tabelas, n_com_base = _processar_tabelas_base_reduzida(
+                wb, aba, limite=int(limite)
+            )
 
         st.session_state["br_consolidado_bytes"] = consolidado_bytes.getvalue()
 
@@ -167,7 +190,10 @@ def processador_base_reduzida():
         zip_buffer.seek(0)
         st.session_state["br_zip_bytes"] = zip_buffer.getvalue()
 
-        st.success(f"Processamento concluído! {len(arquivos_tabelas)} tabela(s) encontrada(s).")
+        st.success(
+            f"Processamento concluído! {len(arquivos_tabelas)} tabela(s) encontrada(s), "
+            f"{n_com_base} com linha 'Base reduzida' (colunas < {int(limite)} excluídas nelas)."
+        )
 
     if "br_consolidado_bytes" in st.session_state:
         st.download_button(
@@ -186,4 +212,3 @@ def processador_base_reduzida():
             mime="application/zip",
             key="download_br_zip"
         )
-

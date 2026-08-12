@@ -7,8 +7,10 @@ logo depois da linha "Pergunta:" de cada bloco.
 Sem dependência do Streamlit — pode ser testado isoladamente.
 """
 import openpyxl
+import unicodedata
 
 from core.base_multiplas_math import normalizar_texto
+from core.planilha_utils import inserir_linhas_seguro
 
 # Nomes de categoria (grupo da tabela) reconhecidos como "segmentação
 # territorial" — qualquer bloco cujo grupo bata com um destes (comparação
@@ -32,6 +34,37 @@ CATEGORIAS_LEGENDA = [
     "Subregiões",
 ]
 CATEGORIAS_LEGENDA_NORM = {normalizar_texto(c) for c in CATEGORIAS_LEGENDA}
+
+
+def _forcar_cor_preta(item):
+    """
+    Reconstrói um item de legenda forçando a cor do texto pra preto
+    explícito (RGB), em vez de deixar uma cor referenciada por TEMA
+    (theme=N) — cores de tema são relativas ao arquivo: o mesmo índice
+    de tema pode ser preto no arquivo de legendas de origem e virar
+    outra cor (ex.: laranja) no relatório de destino, porque cada
+    workbook tem sua própria paleta de tema. Preserva negrito/itálico
+    de cada trecho, só troca a cor. Usada pelos dois motores de
+    Legendas (v1 e v2) sempre que um item é transplantado de um
+    workbook pra outro.
+    """
+    from copy import copy as _copy_style
+
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.styles.colors import Color
+
+    if not isinstance(item, CellRichText):
+        return item
+    novos_blocos = []
+    for bloco in item:
+        if isinstance(bloco, TextBlock):
+            nova_fonte = _copy_style(bloco.font) if bloco.font else None
+            if nova_fonte is not None:
+                nova_fonte.color = Color(rgb="FF000000")
+            novos_blocos.append(TextBlock(nova_fonte, bloco.text))
+        else:
+            novos_blocos.append(bloco)
+    return CellRichText(novos_blocos)
 
 
 def _eh_linha_vazia(linha):
@@ -326,30 +359,6 @@ def gerar_workbook_com_legendas(caminho_tabela, pares, aba=None):
 
     from openpyxl.cell.rich_text import CellRichText, TextBlock
     from openpyxl.styles import Alignment, Font
-    from openpyxl.styles.colors import Color
-
-    def _forcar_cor_preta(item):
-        """
-        Reconstrói um item de legenda forçando a cor do texto pra preto
-        explícito (RGB), em vez de deixar uma cor referenciada por TEMA
-        (theme=N) — cores de tema são relativas ao arquivo: o mesmo
-        índice de tema pode ser preto no arquivo de legendas de origem e
-        virar outra cor (ex.: laranja) no relatório de destino, porque
-        cada workbook tem sua própria paleta de tema. Preserva
-        negrito/itálico de cada trecho, só troca a cor.
-        """
-        if not isinstance(item, CellRichText):
-            return item
-        novos_blocos = []
-        for bloco in item:
-            if isinstance(bloco, TextBlock):
-                nova_fonte = _copy_style(bloco.font) if bloco.font else None
-                if nova_fonte is not None:
-                    nova_fonte.color = Color(rgb="FF000000")
-                novos_blocos.append(TextBlock(nova_fonte, bloco.text))
-            else:
-                novos_blocos.append(bloco)
-        return CellRichText(novos_blocos)
 
     wb = openpyxl.load_workbook(caminho_tabela, rich_text=True)
     nome_aba = aba or wb.sheetnames[0]
@@ -473,3 +482,605 @@ def _expandir_area_impressao(ws):
             f"{get_column_letter(min_col)}{min_row}:{get_column_letter(max_col)}{novo_max_row}"
         )
     ws.print_area = novas_areas
+
+
+# ============================================================================
+# Motor v2 de Legendas — casamento por CHAVE individual (código/rótulo),
+# não por "tipo" de tabela inteiro.
+#
+# Diferença pro motor original acima: em vez de colar o bloco de legenda
+# inteiro sempre que uma tabela é do tipo "Regiões"/"Capital", este motor
+# extrai uma CHAVE de cada item da legenda (um código numérico, ex. "1"
+# de "Região 1 (9,73%): ...", ou uma chave textual, ex. "CENTRO E OESTE"
+# de "Centro e Oeste (25,24%): ...") e só insere, em cada tabela, os itens
+# cuja chave realmente aparece no cabeçalho DAQUELA tabela específica —
+# então uma tabela que só usa as regiões 1, 3 e 7 recebe só essas três,
+# não a legenda completa.
+#
+# Baseado no algoritmo de referência "InserirLegendasRegioes.bas".
+# ============================================================================
+
+TITULOS_LEGENDA_RECONHECIDOS = {
+    "LEGENDA", "LEGENDAS",
+    "LEGENDA CAPITAL", "LEGENDAS CAPITAL",
+    "LEGENDA REGIOES", "LEGENDAS REGIOES",
+}
+
+PREFIXOS_CHAVE_NUMERICA = [
+    "MACRORREGIOES", "MACRORREGIAO",
+    "MESORREGIOES", "MESORREGIAO",
+    "REGIOES", "REGIAO",
+    "RPA", "ZONA", "MESO",
+]
+
+
+def _normalizar_texto_vba(valor):
+    """
+    Normalização usada só pelo motor v2 de Legendas — tira acento,
+    maiúsculo, colapsa espaço/quebra de linha/tab/NBSP em um espaço só,
+    mas MANTÉM pontuação (":", "(", "[" etc.), diferente de
+    `normalizar_texto` (base_multiplas_math), que tira toda pontuação —
+    aqui a posição de ":" e "(" importa pra extrair a chave.
+    """
+    if valor is None:
+        return ""
+    s = str(valor)
+    for ch in ("\r", "\n", "\t", "\xa0"):
+        s = s.replace(ch, " ")
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    s = s.strip()
+    while "  " in s:
+        s = s.replace("  ", " ")
+    return s.upper()
+
+
+def _eh_titulo_legenda_v2(texto_normalizado):
+    return texto_normalizado in TITULOS_LEGENDA_RECONHECIDOS
+
+
+def _resto_representa_faixa(resto):
+    """'2 a 5', '10-15' etc. — não é um código único, é uma faixa; não vira chave."""
+    s = " " + _normalizar_texto_vba(resto) + " "
+    if not s.strip():
+        return False
+    if " E " in s or " A " in s or " ATE " in s:
+        return True
+    t = s.strip()
+    return t.startswith("-") or t.startswith("/")
+
+
+def _extrair_codigo_numerico_inicial(valor):
+    """
+    Extrai um código numérico de início de célula — direto se a célula já
+    for um número inteiro, ou lendo os dígitos iniciais do texto (com ou
+    sem prefixo reconhecido como 'Região'/'RPA'/'Zona'/'Meso' na frente).
+    Devolve "" se não achar (ou se o resto do texto sugerir uma FAIXA tipo
+    '2 a 5', que não é um código único).
+    """
+    if valor is None:
+        return ""
+    if isinstance(valor, bool):
+        return ""
+    if isinstance(valor, (int, float)):
+        if abs(valor - round(valor)) < 1e-7:
+            return str(int(round(valor)))
+        return ""
+
+    s = _normalizar_texto_vba(valor)
+    if not s:
+        return ""
+
+    prefixo_reconhecido = False
+    for prefixo in PREFIXOS_CHAVE_NUMERICA:
+        if s == prefixo:
+            return ""
+        for sep in (" ", "-", ":"):
+            if s.startswith(prefixo + sep):
+                s = s[len(prefixo) + 1:].strip()
+                prefixo_reconhecido = True
+                break
+        if prefixo_reconhecido:
+            break
+
+    digitos = ""
+    for ch in s:
+        if ch.isdigit():
+            digitos += ch
+        else:
+            break
+    if not digitos:
+        return ""
+
+    resto = s[len(digitos):].strip()
+
+    if prefixo_reconhecido:
+        if _resto_representa_faixa(resto):
+            return ""
+        return str(int(digitos))
+
+    # sem prefixo reconhecido: só aceita se o "resto" deixar claro que é
+    # mesmo um código isolado (nada depois, ou logo um "(" / "[")
+    if not resto:
+        return str(int(digitos))
+    if resto[0] in "([":
+        return str(int(digitos))
+    return ""
+
+
+def _extrair_chave_textual_legenda_v2(valor, eh_continuacao):
+    """Pra itens sem código numérico (ex.: 'Centro e Oeste (25,24%): ...')
+    — usa o texto antes do primeiro '(' ou ':' como chave."""
+    if eh_continuacao or valor is None:
+        return ""
+    s = _normalizar_texto_vba(valor)
+    if not s:
+        return ""
+    if _eh_titulo_legenda_v2(s):
+        return ""
+    if s in ("TOTAL", "BASE"):
+        return ""
+    if s.startswith("PERGUNTA"):
+        return ""
+
+    p_par = s.find("(")
+    p_dois_pontos = s.find(":")
+    if p_dois_pontos < 1:
+        return ""
+
+    corte = -1
+    if p_par >= 1:
+        corte = p_par
+    if p_dois_pontos >= 1 and (corte == -1 or p_dois_pontos < corte):
+        corte = p_dois_pontos
+    if corte > 0:
+        s = s[:corte].strip()
+
+    if not s or len(s) > 80:
+        return ""
+    try:
+        float(s.replace(",", "."))
+        return ""
+    except ValueError:
+        pass
+    if "%" in s:
+        return ""
+    return s
+
+
+def _eh_linha_continuacao_v2(cel):
+    """Linha de continuação de um item de legenda multi-linha — detecta
+    por recuo do Excel (indent) ou por espaço/tab/NBSP no início do texto."""
+    try:
+        if cel.alignment and cel.alignment.indent and cel.alignment.indent > 0:
+            return True
+    except AttributeError:
+        pass
+    valor = cel.value
+    if isinstance(valor, str) and valor:
+        return valor[0] in (" ", "\t", "\xa0")
+    return False
+
+
+def _linha_totalmente_vazia_v2(ws, linha, max_col):
+    for c in range(1, max_col + 1):
+        v = ws.cell(row=linha, column=c).value
+        if v is not None and str(v).strip() != "":
+            return False
+    return True
+
+
+def _area_vazia_v2(ws, linha_ini, linha_fim, max_col):
+    for r in range(linha_ini, linha_fim + 1):
+        if not _linha_totalmente_vazia_v2(ws, r, max_col):
+            return False
+    return True
+
+
+def parsear_legenda_por_chave(caminho_arquivo, aba=None):
+    """
+    Lê o arquivo de referência da legenda e monta um mapa CHAVE -> bloco
+    (linha de início/fim do item + linha do título ao qual pertence),
+    junto com um snapshot dos valores e alturas de linha (pra poder
+    copiar depois sem precisar manter o arquivo de referência aberto).
+
+    Reconhece vários blocos de título na mesma aba (ex.: um bloco
+    "LEGENDA REGIOES" e outro "LEGENDA CAPITAL" empilhados) — cada item
+    fica associado ao título mais próximo acima dele.
+
+    Returns:
+        dict com "mapa" (chave -> {linha_inicio, linha_fim, linha_titulo}),
+        "linhas_titulo" (lista, em ordem), "linhas_valores" (linha ->
+        lista de valores), "alturas" (linha -> altura ou None),
+        "max_col", e "titulos_aceitos" (derivado automaticamente dos
+        próprios títulos encontrados — ex.: "LEGENDA REGIOES" vira
+        "REGIOES" — usado depois pra ajudar a achar o cabeçalho certo
+        em cada tabela do relatório).
+    """
+    wb = openpyxl.load_workbook(caminho_arquivo, rich_text=True)
+    ws = wb[aba] if aba else wb[wb.sheetnames[0]]
+    max_row = ws.max_row
+    max_col = ws.max_column
+
+    linhas_valores = {
+        r: [ws.cell(row=r, column=c).value for c in range(1, max_col + 1)]
+        for r in range(1, max_row + 1)
+    }
+    alturas = {}
+    for r in range(1, max_row + 1):
+        dim = ws.row_dimensions.get(r)
+        alturas[r] = dim.height if (dim and dim.height) else None
+
+    # linhas de título (varre todas as colunas, igual ao original)
+    linhas_titulo = []
+    titulos_aceitos = set()
+    for r in range(1, max_row + 1):
+        for c in range(1, max_col + 1):
+            norm = _normalizar_texto_vba(ws.cell(row=r, column=c).value)
+            if _eh_titulo_legenda_v2(norm):
+                linhas_titulo.append(r)
+                for prefixo in ("LEGENDAS ", "LEGENDA "):
+                    if norm.startswith(prefixo):
+                        resto = norm[len(prefixo):].strip()
+                        if resto:
+                            titulos_aceitos.add(resto)
+                        break
+                break
+
+    linhas_titulo_set = set(linhas_titulo)
+
+    titulo_anterior = {}
+    atual = 0
+    for r in range(1, max_row + 1):
+        titulo_anterior[r] = atual
+        if r in linhas_titulo_set:
+            atual = r
+
+    proximo_titulo = {}
+    atual = 0
+    for r in range(max_row, 0, -1):
+        proximo_titulo[r] = atual
+        if r in linhas_titulo_set:
+            atual = r
+
+    # linhas de item (têm uma chave extraível) — só coluna A, igual ao original
+    linhas_item = []
+    for r in range(1, max_row + 1):
+        if r in linhas_titulo_set:
+            continue
+        cel = ws.cell(row=r, column=1)
+        continuacao = _eh_linha_continuacao_v2(cel)
+
+        chave = ""
+        for c in range(1, max_col + 1):
+            codigo = _extrair_codigo_numerico_inicial(ws.cell(row=r, column=c).value)
+            if codigo:
+                chave = codigo
+                break
+        if not chave and not continuacao:
+            chave = _extrair_chave_textual_legenda_v2(cel.value, continuacao)
+
+        if chave:
+            linhas_item.append((r, chave))
+
+    quebras_legenda = sorted(b.id for b in ws.row_breaks.brk if b.id is not None)
+
+    def _fim_pagina(linha_inicio):
+        fim = max_row
+        for quebra_id in quebras_legenda:
+            inicio_pagina = quebra_id + 1
+            if inicio_pagina > linha_inicio:
+                fim = min(fim, inicio_pagina - 1)
+                break
+        return fim
+
+    mapa = {}
+    for idx, (linha_inicio, chave) in enumerate(linhas_item):
+        linha_fim = max_row
+        if idx + 1 < len(linhas_item):
+            linha_fim = min(linha_fim, linhas_item[idx + 1][0] - 1)
+        pt = proximo_titulo.get(linha_inicio, 0)
+        if pt:
+            linha_fim = min(linha_fim, pt - 1)
+        linha_fim = min(linha_fim, _fim_pagina(linha_inicio))
+        if linha_fim < linha_inicio:
+            linha_fim = linha_inicio
+
+        while linha_fim > linha_inicio and _linha_totalmente_vazia_v2(ws, linha_fim, max_col):
+            linha_fim -= 1
+
+        linha_titulo = titulo_anterior.get(linha_inicio, 0) or (linhas_titulo[0] if linhas_titulo else 0)
+
+        if chave not in mapa:  # chaves repetidas: preserva a primeira ocorrência
+            mapa[chave] = {
+                "linha_inicio": linha_inicio,
+                "linha_fim": linha_fim,
+                "linha_titulo": linha_titulo,
+            }
+
+    return {
+        "mapa": mapa,
+        "linhas_titulo": linhas_titulo,
+        "linhas_valores": linhas_valores,
+        "alturas": alturas,
+        "max_col": max_col,
+        "titulos_aceitos": titulos_aceitos,
+    }
+
+
+def _normalizar_fonte_corpo_legenda(item):
+    """
+    Força fonte DIN Book tamanho 9 preta em TODOS os trechos de um item
+    de legenda (rich text) — inclusive no prefixo em negrito antes do
+    ":" — preservando negrito/itálico de cada trecho, só uniformizando
+    família/tamanho/cor. Sem isso, o prefixo em negrito ficava com a
+    fonte que o arquivo de referência original usava (nem sempre DIN
+    Book), inconsistente com o resto do relatório.
+    """
+    from copy import copy as _copy_style
+
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.styles.colors import Color
+
+    if not isinstance(item, CellRichText):
+        return item
+    novos_blocos = []
+    for bloco in item:
+        if isinstance(bloco, TextBlock):
+            nova_fonte = _copy_style(bloco.font) if bloco.font else None
+            if nova_fonte is not None:
+                nova_fonte.rFont = "DIN Book"
+                nova_fonte.sz = 9
+                nova_fonte.color = Color(rgb="FF000000")
+            novos_blocos.append(TextBlock(nova_fonte, bloco.text))
+        else:
+            novos_blocos.append(bloco)
+    return CellRichText(novos_blocos)
+
+
+def _normalizar_fonte_titulo_legenda(item):
+    """Igual a `_normalizar_fonte_corpo_legenda`, mas pro título (DIN 10,
+    sempre negrito) — cobre o caso do título vir como rich text (com
+    trechos sem fonte própria explícita), que senão caía no Calibri
+    padrão do Excel em vez de herdar a fonte da célula."""
+    from copy import copy as _copy_style
+
+    from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.styles.colors import Color
+
+    if not isinstance(item, CellRichText):
+        return item
+    novos_blocos = []
+    for bloco in item:
+        if isinstance(bloco, TextBlock):
+            nova_fonte = _copy_style(bloco.font) if bloco.font else None
+            if nova_fonte is not None:
+                nova_fonte.rFont = "DIN"
+                nova_fonte.sz = 10
+                nova_fonte.b = True
+                nova_fonte.color = Color(rgb="FF000000")
+            novos_blocos.append(TextBlock(nova_fonte, bloco.text))
+        else:
+            novos_blocos.append(bloco)
+    return CellRichText(novos_blocos)
+
+
+def _copiar_linha_legenda(ws_destino, linha_destino, dados_referencia, linha_ref, max_col_destino, tipo="item"):
+    """
+    Copia uma linha da referência pro relatório, já reaplicando a
+    formatação que se perde numa cópia de valor puro:
+      - linha de título (tipo="titulo", ex.: "LEGENDA" ou "LEGENDA
+        REGIÕES") fica em DIN tamanho 10, negrito;
+      - corpo da legenda (tipo="item") fica em DIN Book tamanho 9,
+        preservando negrito nos trechos até ":" e cor forçada pra preto
+        (evita o problema de cor de tema divergindo entre o arquivo de
+        legenda e o relatório);
+      - linhas de continuação (texto simples, sem prefixo em negrito)
+        ganham o mesmo DIN Book 9 e recuo.
+
+    A fonte da CÉLULA (não só dos trechos de rich text) é sempre
+    definida também — sem isso, qualquer trecho de um item de legenda
+    sem formatação própria explícita cai no Calibri padrão do Excel em
+    vez de herdar DIN/DIN Book.
+    """
+    from openpyxl.cell.rich_text import CellRichText
+    from openpyxl.styles import Alignment, Font
+
+    valores = dados_referencia["linhas_valores"].get(linha_ref, [])
+    for c in range(1, max_col_destino + 1):
+        valor = valores[c - 1] if c - 1 < len(valores) else None
+
+        if tipo == "titulo":
+            valor_normalizado = _normalizar_fonte_titulo_legenda(valor)
+            cel = ws_destino.cell(row=linha_destino, column=c, value=valor_normalizado)
+            if c == 1 and valor is not None:
+                cel.font = Font(name="DIN", size=10, bold=True, color="FF000000")
+            continue
+
+        valor_normalizado = _normalizar_fonte_corpo_legenda(_forcar_cor_preta(valor))
+        cel = ws_destino.cell(row=linha_destino, column=c, value=valor_normalizado)
+        if c == 1 and valor is not None:
+            # fonte de base da célula — cobre tanto o texto simples de
+            # continuação quanto qualquer trecho "solto" sem formatação
+            # própria dentro de um item em rich text
+            cel.font = Font(name="DIN Book", size=9, bold=False, color="FF000000")
+            if not isinstance(valor_normalizado, CellRichText):
+                cel.alignment = Alignment(horizontal="left", indent=1)
+
+    altura = dados_referencia["alturas"].get(linha_ref)
+    if altura:
+        ws_destino.row_dimensions[linha_destino].height = altura
+
+
+def _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino):
+    mapa = dados_referencia["mapa"]
+    max_col = dados_referencia["max_col"]
+
+    linha_titulo_ref = None
+    for chave in chaves:
+        if chave in mapa and mapa[chave]["linha_titulo"]:
+            linha_titulo_ref = mapa[chave]["linha_titulo"]
+            break
+    if not linha_titulo_ref and dados_referencia["linhas_titulo"]:
+        linha_titulo_ref = dados_referencia["linhas_titulo"][0]
+    if not linha_titulo_ref:
+        return
+
+    _copiar_linha_legenda(ws, linha_destino, dados_referencia, linha_titulo_ref, max_col, tipo="titulo")
+
+    # a legenda em si começa IMEDIATAMENTE na linha seguinte ao título —
+    # sem linha em branco de separação entre as duas
+    linha_atual = linha_destino + 1
+    for chave in chaves:
+        if chave not in mapa:
+            continue
+        ini, fim = mapa[chave]["linha_inicio"], mapa[chave]["linha_fim"]
+        for offset, linha_ref in enumerate(range(ini, fim + 1)):
+            _copiar_linha_legenda(ws, linha_atual + offset, dados_referencia, linha_ref, max_col, tipo="item")
+        linha_atual += (fim - ini + 1)
+
+
+def _ja_tem_legenda_aqui(ws, linha_destino):
+    """Confere se já existe um título de legenda reconhecido bem nessa
+    posição — sinal de que uma execução anterior já inseriu a legenda
+    ali, então não insere de novo (evita duplicar ao rodar 2x)."""
+    norm = _normalizar_texto_vba(ws.cell(row=linha_destino, column=1).value)
+    return _eh_titulo_legenda_v2(norm)
+
+
+def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
+    """
+    Para cada linha 'Pergunta:' do relatório, procura — de baixo pra
+    cima, dentro dos limites da mesma página impressa (usa as quebras de
+    página já existentes, inseridas pelo código 07) — um cabeçalho de
+    tabela cujas células tenham códigos/chaves batendo com itens da
+    legenda de referência. Insere a legenda logo abaixo da Pergunta
+    (com uma linha em branco de separação), com o título correspondente
+    e SÓ os itens cujas chaves realmente aparecem naquele cabeçalho
+    específico — uma tabela que só usa as regiões 1, 3 e 7 recebe só
+    essas três, não a lista completa.
+
+    Idempotente: confere se o espaço já está ocupado antes de inserir,
+    então rodar de novo não duplica.
+
+    Args:
+        ws: planilha do relatório.
+        dados_referencia: dict devolvido por `parsear_legenda_por_chave`.
+        titulos_aceitos: conjunto de rótulos de título aceitos (ex.:
+            {"REGIOES", "CAPITAL"}) usado como uma das regras de
+            confiança pra achar o cabeçalho certo. Se None, usa o que
+            foi derivado automaticamente da própria referência.
+
+    Returns:
+        Número de tabelas que receberam legenda.
+    """
+    mapa = dados_referencia["mapa"]
+    if not mapa:
+        return 0
+
+    max_col = ws.max_column
+    max_row = ws.max_row
+
+    titulos_aceitos_norm = titulos_aceitos or dados_referencia.get("titulos_aceitos") or set()
+
+    linhas_pergunta = [
+        r for r in range(1, max_row + 1)
+        if _normalizar_texto_vba(ws.cell(row=r, column=1).value).startswith("PERGUNTA")
+    ]
+    if not linhas_pergunta:
+        return 0
+
+    quebras_relatorio = sorted(b.id for b in ws.row_breaks.brk if b.id is not None)
+
+    def _primeira_linha_pagina(linha_ref):
+        melhor = 1
+        for quebra_id in quebras_relatorio:
+            inicio_pagina = quebra_id + 1
+            if inicio_pagina <= linha_ref:
+                melhor = inicio_pagina
+            else:
+                break
+        return melhor
+
+    tem_total = {}
+    tem_titulo_aceito = {}
+    for r in range(1, max_row + 1):
+        tt, tta = False, False
+        for c in range(1, max_col + 1):
+            norm = _normalizar_texto_vba(ws.cell(row=r, column=c).value)
+            if norm == "TOTAL":
+                tt = True
+            if norm and any(titulo in norm for titulo in titulos_aceitos_norm):
+                tta = True
+        tem_total[r] = tt
+        tem_titulo_aceito[r] = tta
+
+    def _existe_true(flags, ini, fim):
+        ini, fim = max(1, ini), min(max_row, fim)
+        return any(flags.get(r, False) for r in range(ini, fim + 1))
+
+    def _chaves_na_linha(r):
+        encontradas = []
+        for c in range(1, max_col + 1):
+            valor = ws.cell(row=r, column=c).value
+            codigo = _extrair_codigo_numerico_inicial(valor)
+            chave = None
+            if codigo and codigo in mapa:
+                chave = codigo
+            else:
+                norm = _normalizar_texto_vba(valor)
+                if norm and norm in mapa:
+                    chave = norm
+            if chave and chave not in encontradas:
+                encontradas.append(chave)
+        return encontradas
+
+    # FASE 1: planeja de baixo pra cima (números de linha continuam válidos)
+    planos = []
+    for i in range(len(linhas_pergunta) - 1, -1, -1):
+        linha_pergunta = linhas_pergunta[i]
+        linha_pergunta_anterior = linhas_pergunta[i - 1] if i > 0 else 0
+
+        primeira_linha_pagina = _primeira_linha_pagina(linha_pergunta)
+        if linha_pergunta_anterior > 0:
+            primeira_linha_pagina = max(primeira_linha_pagina, linha_pergunta_anterior + 1)
+        primeira_linha_pagina = max(1, primeira_linha_pagina)
+
+        linha_cabecalho, chaves_melhor = None, None
+        for r in range(linha_pergunta - 1, primeira_linha_pagina - 1, -1):
+            chaves = _chaves_na_linha(r)
+            qtd = len(chaves)
+            if qtd > 0:
+                achou_titulo = _existe_true(tem_titulo_aceito, max(primeira_linha_pagina, r - 3), r)
+                achou_total = _existe_true(tem_total, max(primeira_linha_pagina, r - 2), r)
+                if (achou_titulo and qtd >= 1) or (achou_total and qtd >= 2) or (qtd >= 3):
+                    linha_cabecalho, chaves_melhor = r, chaves
+                    break
+
+        if linha_cabecalho:
+            qtd_linhas = sum(
+                mapa[k]["linha_fim"] - mapa[k]["linha_inicio"] + 1 for k in chaves_melhor if k in mapa
+            ) + 1  # +1 = só a linha do título; a legenda começa logo em seguida, sem linha em branco
+            if qtd_linhas > 1:
+                planos.append((linha_pergunta, chaves_melhor, qtd_linhas))
+
+    if not planos:
+        return 0
+
+    # FASE 2: aplica (já em ordem de baixo pra cima)
+    inseridas = 0
+    for linha_pergunta, chaves, qtd_linhas in planos:
+        linha_destino_prevista = linha_pergunta + 2
+        if _ja_tem_legenda_aqui(ws, linha_destino_prevista):
+            continue  # execução anterior já inseriu a legenda aqui — não duplica
+
+        linha_espaco = linha_pergunta + 1
+        if not _area_vazia_v2(ws, linha_espaco, linha_espaco, max_col):
+            inserir_linhas_seguro(ws, linha_espaco, 1)
+
+        linha_destino = linha_pergunta + 2
+        inserir_linhas_seguro(ws, linha_destino, qtd_linhas)
+
+        _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino)
+        inseridas += 1
+
+    return inseridas

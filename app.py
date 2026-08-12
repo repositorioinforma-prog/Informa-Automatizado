@@ -20,7 +20,7 @@ from analises.correspondencia_simples import analise_correspondencia
 from core.dados import carregar_dados
 
 
-st.set_page_config(page_title="Análise de Dados Automática", layout="wide")
+st.set_page_config(page_title="Informa Core", layout="wide")
 
 st.markdown(
     """
@@ -263,7 +263,6 @@ def main():
     analise = st.sidebar.selectbox(
         "Escolha a análise",
         (
-            "Tratamento de Dados",
             "Mapas de Correspondência",
             "Mapas de Correspondência (Múltiplas Variáveis)",
             "Processador de Base Reduzida",

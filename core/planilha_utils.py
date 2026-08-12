@@ -415,3 +415,155 @@ def worksheet_para_html(ws, max_linhas=150, max_colunas=30):
     truncado_linhas = total_linhas > max_linhas
     truncado_colunas = total_colunas > max_colunas
     return html, truncado_linhas, truncado_colunas
+
+
+# ---------------------------------------------------------------------------
+# Detecção de blocos de tabela e exclusão de colunas por "Base reduzida"
+# abaixo de um limite — usado tanto pelo código 05 do Relatório
+# Automatizado quanto pelo Processador de Base Reduzida standalone (as
+# duas telas compartilham este mesmo motor, testado uma vez só).
+# ---------------------------------------------------------------------------
+def normalizar_texto_maiusculo(valor):
+    return str(valor).strip().upper() if valor is not None else ""
+
+
+def linha_vazia_ate_coluna(ws, r, max_col):
+    return all(ws.cell(row=r, column=c).value is None for c in range(1, max_col + 1))
+
+
+def encontrar_inicio_bloco(ws, linha_ref, max_col):
+    """Sobe a partir de `linha_ref` enquanto a linha anterior não estiver
+    totalmente vazia — acha o início do bloco/tabela contíguo."""
+    r = linha_ref
+    while r > 1 and not linha_vazia_ate_coluna(ws, r - 1, max_col):
+        r -= 1
+    return r
+
+
+def encontrar_fim_bloco(ws, linha_ref, max_col):
+    """Desce a partir de `linha_ref` enquanto a linha seguinte não estiver
+    totalmente vazia — acha o fim do bloco/tabela contíguo."""
+    r = linha_ref
+    max_row = ws.max_row
+    while r < max_row and not linha_vazia_ate_coluna(ws, r + 1, max_col):
+        r += 1
+    return r
+
+
+def _excluir_coluna_no_bloco(ws, linha_inicio, linha_fim, coluna, max_col):
+    """Remove uma coluna dentro de [linha_inicio, linha_fim], deslocando
+    tudo à direita dela uma posição pra esquerda (valor + estilo), e
+    limpa a última coluna do bloco (que sobra "duplicada" depois do
+    deslocamento)."""
+    from copy import copy as _copy_style
+    from openpyxl.styles import Border
+
+    for r in range(linha_inicio, linha_fim + 1):
+        for c in range(coluna, max_col):
+            origem = ws.cell(row=r, column=c + 1)
+            destino = ws.cell(row=r, column=c)
+            destino.value = origem.value
+            if origem.has_style:
+                destino.font = _copy_style(origem.font)
+                destino.border = _copy_style(origem.border)
+                destino.fill = _copy_style(origem.fill)
+                destino.number_format = origem.number_format
+                destino.protection = _copy_style(origem.protection)
+                destino.alignment = _copy_style(origem.alignment)
+        ultima = ws.cell(row=r, column=max_col)
+        ultima.value = None
+        ultima.border = Border()
+
+
+def excluir_colunas_base_reduzida(ws, limite=25, texto_alvo="BASE REDUZIDA"):
+    """
+    Para toda linha cuja coluna A seja exatamente `texto_alvo` (comparação
+    exata, sem diferenciar maiúsc./minúsc.), exclui as colunas desse
+    bloco de tabela cujo valor numérico seja menor que `limite` —
+    deslocando o resto pra esquerda e reconstruindo corretamente
+    qualquer mesclagem de cabeçalho que abranja essas colunas (ex.: um
+    título "Regiões" mesclado sobre várias colunas de região encolhe
+    para cobrir só as colunas que sobraram, em vez de quebrar).
+
+    Detecta os limites do bloco/tabela automaticamente (sobe/desce até
+    achar uma linha totalmente vazia), então funciona tanto num
+    relatório grande com várias tabelas quanto num arquivo com uma
+    tabela só.
+
+    Returns:
+        Número de colunas excluídas no total (soma de todos os blocos).
+    """
+    max_col_geral = ws.max_column
+    linhas_alvo = [
+        r for r in range(1, ws.max_row + 1)
+        if normalizar_texto_maiusculo(ws.cell(row=r, column=1).value) == texto_alvo
+    ]
+
+    colunas_excluidas_total = 0
+
+    for linha_base in linhas_alvo:
+        inicio = encontrar_inicio_bloco(ws, linha_base, max_col_geral)
+        fim = encontrar_fim_bloco(ws, linha_base, max_col_geral)
+
+        ultima_col_linha = 1
+        for c in range(1, max_col_geral + 1):
+            if ws.cell(row=linha_base, column=c).value is not None:
+                ultima_col_linha = c
+
+        colunas_para_excluir = []
+        for c in range(ultima_col_linha, 1, -1):
+            valor = ws.cell(row=linha_base, column=c).value
+            numero = None
+            if isinstance(valor, (int, float)):
+                numero = valor
+            elif isinstance(valor, str):
+                limpo = "".join(ch for ch in valor.replace(",", ".") if ch.isdigit() or ch in ".-")
+                if limpo:
+                    try:
+                        numero = float(limpo)
+                    except ValueError:
+                        numero = None
+            if numero is not None and numero < limite:
+                colunas_para_excluir.append(c)
+
+        if not colunas_para_excluir:
+            continue
+
+        faixas_capturadas = []
+        for rng in list(ws.merged_cells.ranges):
+            if rng.min_row <= fim and rng.max_row >= inicio:
+                # guarda o valor de verdade (só a célula do canto superior
+                # esquerdo de uma mesclagem tem o texto) para restaurar
+                # depois — sem isso, o deslocamento de coluna pode
+                # sobrescrever esse valor com uma célula vizinha vazia
+                valor_original = ws.cell(row=rng.min_row, column=rng.min_col).value
+                faixas_capturadas.append((rng.min_row, rng.min_col, rng.max_row, rng.max_col, valor_original))
+                try:
+                    ws.unmerge_cells(str(rng))
+                except KeyError:
+                    ws.merged_cells.ranges.discard(rng)
+
+        for col_excluir in colunas_para_excluir:  # já em ordem decrescente
+            _excluir_coluna_no_bloco(ws, inicio, fim, col_excluir, max_col_geral)
+            colunas_excluidas_total += 1
+
+        for min_row, min_col, max_row, max_col, valor_original in faixas_capturadas:
+            excluidas_antes = sum(1 for c in colunas_para_excluir if c < min_col)
+            excluidas_dentro = sum(1 for c in colunas_para_excluir if min_col <= c <= max_col)
+            novo_min_col = min_col - excluidas_antes
+            novo_max_col = max_col - excluidas_antes - excluidas_dentro
+            if novo_max_col >= novo_min_col:
+                ws.cell(row=min_row, column=novo_min_col).value = valor_original
+                # remescla se sobrou mais de 1 COLUNA (novo_max_col >
+                # novo_min_col) OU se a mesclagem já era vertical desde o
+                # início (max_row > min_row, ex.: "Total" ocupando as 2
+                # linhas de cabeçalho) — checar só a largura ignorava
+                # mesclagens puramente verticais, perdendo elas mesmo
+                # quando nenhuma coluna daquele intervalo foi excluída
+                if novo_max_col > novo_min_col or max_row > min_row:
+                    ws.merge_cells(
+                        start_row=min_row, start_column=novo_min_col,
+                        end_row=max_row, end_column=novo_max_col
+                    )
+
+    return colunas_excluidas_total

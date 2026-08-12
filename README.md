@@ -1,598 +1,256 @@
-# App Analítico — Instituto Informa
+# Aplicativo de Análise de Dados — Mapas de Correspondência
 
-Aplicação web em **Python 3.12 + Streamlit** para apoiar rotinas de análise, preparação e finalização de pesquisas. O projeto reúne, em uma única interface, módulos de **Análise de Correspondência**, tratamento de relatórios Excel, equilíbrio de cotas por exclusão, ponderação, geração de amostras e automações que substituem etapas antes executadas manualmente em Excel/VBA.
+Aplicação web desenvolvida em **Python** e **Streamlit** para análise exploratória de dados, com foco na criação de **Mapas de Correspondência** a partir de duas variáveis categóricas.
 
-> O projeto trabalha principalmente com arquivos `.xlsx`, `.sav` e `.csv`. Alguns módulos preservam a formatação original do Excel usando `openpyxl`; outros trabalham com dados tabulares usando `pandas` e `pyreadstat`.
+O sistema permite carregar bases em CSV, Excel ou SPSS, construir automaticamente uma tabela de contingência, calcular a Análise de Correspondência e visualizar as relações entre as categorias em mapas estáticos e interativos.
 
----
+## Visão geral
 
-## Funcionalidades disponíveis
+A Análise de Correspondência é uma técnica estatística utilizada para representar graficamente associações existentes em tabelas de contingência. No aplicativo, as categorias das duas variáveis selecionadas são posicionadas em um plano bidimensional.
 
-O menu lateral atual do aplicativo contém os seguintes módulos:
+Categorias próximas no mapa tendem a apresentar perfis semelhantes ou algum grau de associação. Categorias mais afastadas da origem geralmente possuem maior contribuição para a diferenciação dos resultados.
 
-| Módulo | Situação | Entrada principal | Saída principal |
-|---|---|---|---|
-| Mapas de Correspondência | Funcional | CSV, XLSX ou SAV | Visualizações estática e interativa |
-| Mapas de Correspondência (Múltiplas Variáveis) | Funcional | CSV, XLSX ou SAV | Vários mapas + PowerPoint |
-| Processador de Base Reduzida | Funcional | XLSX | XLSX consolidado + ZIP com tabelas |
-| Exclusões | Funcional | XLSX ou SAV | CSV de IDs + syntax SPSS `.sps` |
-| Base nas Múltiplas | Funcional | 2 arquivos XLSX | Relatório XLSX com bases inseridas |
-| Legendas | Funcional | 2 arquivos XLSX | Relatório XLSX com legendas |
-| Relatório Automatizado | Funcional | XLSX + arquivos auxiliares quando necessários | Relatório XLSX processado |
-| Códigos Individuais | Funcional | XLSX | XLSX processado por uma etapa específica |
-| Gerador de Amostra | Funcional | Bases mestre internas | Plano amostral XLSX |
-| Ponderação | Funcional | SAV + universo manual ou importado | XLSX, `.sps`, SAV ponderado e relatório técnico |
-| Tratamento de Dados | **Reservado / sem fluxo implementado nesta versão** | — | — |
+> A proximidade visual deve ser interpretada em conjunto com a inércia explicada pelas dimensões e com o contexto da pesquisa. O mapa indica padrões de associação, não causalidade.
 
----
+## Principais funcionalidades dos Mapas de Correspondência
 
-## 1. Mapas de Correspondência
+- Carregamento de arquivos nos formatos `.csv`, `.xlsx` e `.sav`;
+- Leitura de rótulos de valores presentes em arquivos SPSS;
+- Seleção de variáveis categóricas diretamente pela interface;
+- Construção automática da tabela de contingência;
+- Cálculo manual da Análise de Correspondência por decomposição em valores singulares — SVD;
+- Exibição da inércia explicada pelas duas dimensões;
+- Geração de mapa estático com Matplotlib;
+- Geração de mapa interativo com Plotly;
+- Edição dos nomes das categorias;
+- Ajuste manual da posição dos rótulos;
+- Remoção individual de pontos e rótulos do mapa;
+- Personalização das legendas de linhas e colunas;
+- Opção para exibir ou ocultar a legenda;
+- Reposicionamento de anotações no gráfico interativo.
 
-### Correspondência simples
+## Como a análise funciona
 
-Permite analisar a associação entre **duas variáveis categóricas**.
+O aplicativo executa as seguintes etapas:
 
-Fluxo principal:
+1. O usuário carrega uma base de dados.
+2. Duas variáveis categóricas são selecionadas.
+3. Uma tabela de contingência é criada com `pandas.crosstab`.
+4. A tabela é convertida em proporções.
+5. São calculadas as massas das linhas e das colunas.
+6. As frequências observadas são comparadas às frequências esperadas sob independência.
+7. A matriz padronizada é decomposta por SVD.
+8. São obtidas as coordenadas principais das categorias.
+9. Os resultados são apresentados em duas dimensões.
 
-1. Carrega um arquivo CSV, XLSX ou SPSS/SAV.
-2. Seleciona duas variáveis categóricas.
-3. Monta a tabela de contingência com `pandas.crosstab`.
-4. Calcula a Análise de Correspondência por SVD usando o motor de `core/ca_math.py`.
-5. Exibe a inércia explicada pelas dimensões.
-6. Gera mapa estático com Matplotlib.
-7. Gera mapa interativo com Plotly.
-8. Permite editar nomes, deslocamentos e visibilidade dos rótulos.
+Embora a interface permita selecionar mais de duas colunas, a versão atual utiliza as **duas primeiras variáveis selecionadas** para produzir o mapa.
 
-A proximidade entre categorias deve ser interpretada em conjunto com a inércia explicada e com o contexto da pesquisa. O mapa mostra **associação**, não causalidade.
+## Interpretação do mapa
 
-### Correspondência com múltiplas variáveis
+No gráfico padrão:
 
-Permite escolher uma **variável principal** e cruzá-la com várias variáveis secundárias em sequência.
+- Os **círculos azuis** representam as categorias da variável posicionada nas linhas da tabela de contingência;
+- Os **triângulos vermelhos** representam as categorias da variável posicionada nas colunas;
+- O eixo horizontal corresponde à **Dimensão 1**;
+- O eixo vertical corresponde à **Dimensão 2**;
+- As linhas tracejadas indicam a origem dos eixos.
 
-Principais recursos:
+### Inércia explicada
 
-- geração de um mapa para cada cruzamento;
-- edição individual dos mapas;
-- configuração de categorias;
-- exportação dos mapas para um único arquivo PowerPoint (`.pptx`).
+Antes dos mapas, o aplicativo apresenta o percentual de inércia explicado por cada dimensão.
 
-O módulo fica em `analises/correspondencia_multipla.py` e reutiliza o motor matemático de `core/ca_math.py`.
+Quanto maior a soma da inércia das duas dimensões, melhor o plano bidimensional resume as associações presentes na tabela original. Quando esse percentual é baixo, parte importante da estrutura dos dados pode estar em dimensões não exibidas.
 
----
+### Distância da origem
 
-## 2. Processador de Base Reduzida
+Categorias próximas do centro geralmente possuem perfis menos diferenciados. Categorias mais afastadas da origem tendem a ser mais relevantes para a formação das dimensões.
 
-Trabalha diretamente com Workbooks do Excel para preservar a formatação do arquivo original.
+### Proximidade entre categorias
 
-O módulo:
+A proximidade entre categorias pode indicar associação ou semelhança de perfil, especialmente quando os pontos pertencem a conjuntos diferentes — linhas e colunas. Essa leitura deve considerar a qualidade de representação das dimensões e o tamanho das frequências observadas.
 
-- recebe um relatório `.xlsx`;
-- identifica e processa tabelas de base reduzida;
-- gera um arquivo consolidado;
-- pode disponibilizar as tabelas processadas separadamente dentro de um ZIP.
+## Requisitos da base de dados
 
-Saídas atuais:
+Para gerar um mapa adequado:
 
-- `Bases reduzidas - Consolidado.xlsx`;
-- `Tabelas_processadas.zip`.
+- Selecione duas variáveis categóricas;
+- Evite variáveis com quantidade excessiva de categorias;
+- Verifique a presença de categorias vazias ou com frequência muito baixa;
+- Evite tabelas com apenas uma linha ou uma coluna contendo frequência positiva;
+- Padronize previamente categorias duplicadas por diferenças de grafia, acentuação ou uso de maiúsculas e minúsculas;
+- Em arquivos SPSS, confirme se os códigos e rótulos de valores estão corretos.
 
----
+### Exemplo de estrutura
 
-## 3. Exclusões — Equilíbrio de Cotas
+| Faixa etária | Avaliação do serviço |
+|---|---|
+| 18 a 24 anos | Ótimo |
+| 25 a 34 anos | Bom |
+| 35 a 44 anos | Regular |
+| 18 a 24 anos | Bom |
 
-Módulo para equilibrar uma amostra por **remoção de entrevistas**, em vez de ponderação.
-
-Permite:
-
-- carregar `.xlsx` ou `.sav`;
-- escolher a variável identificadora do respondente;
-- selecionar variáveis de cota;
-- informar tamanho esperado da amostra;
-- definir tolerância;
-- definir base mínima por categoria;
-- configurar metas em percentual ou número absoluto;
-- importar metas quando aplicável;
-- calcular quais entrevistas podem ser excluídas sem violar as restrições definidas.
-
-Regras centrais do motor:
-
-- não reduzir categorias abaixo da base mínima;
-- não excluir casos de categorias que já estejam abaixo da própria meta;
-- buscar equilíbrio entre as variáveis de cota dentro da tolerância configurada.
-
-Saídas:
-
-- `ids_excluir.csv`;
-- `exclusoes.sps` para aplicação no SPSS.
-
-Lógica matemática: `core/exclusoes_math.py`.
-
----
-
-## 4. Base nas Múltiplas
-
-Algumas tabelas de perguntas de resposta múltipla não recebem automaticamente uma linha de **Base** no relatório exportado.
-
-Este módulo recebe:
-
-1. um relatório com tabelas de perguntas múltiplas;
-2. um relatório do mesmo projeto contendo tabelas com bases válidas.
-
-O sistema casa as colunas pelos textos de **grupo + categoria**, e não apenas pela posição, e insere as bases correspondentes no relatório de múltiplas.
-
-Saída:
-
-- `Relatorio_Multiplas_com_Base.xlsx`.
-
-Interface: `analises/base_multiplas.py`  
-Motor: `core/base_multiplas_math.py`
-
----
-
-## 5. Legendas
-
-Automatiza a inserção de legendas em blocos de tabelas segmentadas por território, como regiões, bairros e municípios.
-
-O módulo recebe:
-
-- relatório principal em Excel;
-- arquivo de legendas em Excel.
-
-Ele localiza blocos compatíveis, realiza o pareamento e insere a legenda no local esperado do relatório, preservando a estrutura da planilha.
-
-Saída:
-
-- `Relatorio_com_Legendas.xlsx`.
-
-Interface: `analises/legendas.py`  
-Motor: `core/legendas_math.py`
-
----
-
-## 6. Relatório Automatizado
-
-Assistente para finalizar relatórios descritivos em Excel, portando para Python/openpyxl uma sequência de rotinas originalmente executadas em VBA.
-
-A versão atual possui as rotinas numeradas **01 a 16** integradas ao fluxo, incluindo etapas de:
-
-- organização e ordenação das tabelas;
-- formatação de rótulos;
-- layout e base reduzida;
-- linhas, espaçamentos e quebras de página;
-- inserção de legendas;
-- ajustes de bases e perguntas;
-- correção de cabeçalhos repetidos;
-- cabeçalho/rodapé de impressão;
-- inserção de capas de resultados.
-
-Algumas etapas pedem arquivos auxiliares, por exemplo:
-
-- arquivo de legenda;
-- arquivo de referência para correção de cabeçalhos.
-
-O processamento mantém um **log de etapas** e oferece pré-visualização antes do download.
-
-Saída padrão:
-
-- `processado_<nome_do_arquivo>.xlsx`.
-
-Interface: `analises/relatorio_automatizado.py`  
-Motor principal: `core/relatorio_automatizado_math.py`
-
-Módulos auxiliares importantes:
-
-- `core/cabecalho_correcao_math.py`;
-- `core/cabecalho_imagem.py`;
-- `core/capas_resultados_math.py`;
-- `core/planilha_utils.py`;
-- `core/legendas_math.py`.
-
-### Observação sobre AutoFit
-
-O `openpyxl` não reproduz o motor visual do Excel com total fidelidade. Em etapas que dependem de AutoFit real, o projeto usa estimativas de altura baseadas no conteúdo das células. Por isso, relatórios muito específicos podem exigir conferência visual final no Excel.
-
----
-
-## 7. Códigos Individuais
-
-Tela de apoio para executar **uma única rotina** do Relatório Automatizado isoladamente.
-
-É útil para:
-
-- testar uma etapa específica;
-- depurar uma rotina em um arquivo real;
-- validar o resultado sem executar todo o assistente.
-
-A lógica não é duplicada: a interface chama as mesmas funções usadas pelo Relatório Automatizado.
-
----
-
-## 8. Gerador de Amostra
-
-Gera planos amostrais a partir da hierarquia territorial oficial utilizada nas bases internas do projeto.
-
-Hierarquia disponível no motor:
-
-- Região Intermediária;
-- Região Imediata;
-- Município;
-- Distrito.
-
-O cálculo distribui entrevistas proporcionalmente à população usando o **Método do Maior Resto**, e também calcula cotas demográficas para:
-
-- sexo;
-- idade;
-- renda.
-
-A interface permite, entre outros parâmetros:
-
-- selecionar UF;
-- filtrar regiões;
-- incluir ou não distritos;
-- definir o nível de quebra territorial;
-- informar o total da amostra;
-- escolher a base populacional;
-- opcionalmente dividir a amostra em campanhas.
-
-Bases utilizadas pelo app:
-
-```text
-dados/gerador_amostra/master_municipios.csv
-dados/gerador_amostra/master_distritos.csv
-```
-
-Essas bases foram preparadas a partir de fontes do IBGE e são carregadas pelo motor `core/amostra_math.py`.
-
-Saída:
-
-- `Amostra_<UF-ou-Brasil>_<N>.xlsx`.
-
-### Reconstrução das bases mestre
-
-O script:
-
-```text
-scripts/amostrador_build_master.py
-```
-
-serve para reconstruir os arquivos mestre quando as fontes territoriais/demográficas forem atualizadas. Os arquivos brutos do IBGE não fazem parte do fluxo normal do aplicativo e devem ser obtidos novamente quando houver necessidade de reconstrução.
-
----
-
-## 9. Ponderação
-
-Módulo para criação e validação de pesos em bases SPSS.
-
-Métodos disponíveis no motor:
-
-- **Razão simples**: calcula fatores a partir da relação universo/amostra por categoria e combina os fatores das variáveis selecionadas;
-- **Raking**: recalibra iterativamente as margens até tentar atingir os percentuais de universo dentro da tolerância informada.
-
-O fluxo permite:
-
-- carregar uma base `.sav`;
-- selecionar variáveis de ponderação;
-- informar ou reutilizar distribuições de universo;
-- escolher o método;
-- configurar tolerância e parâmetros de cálculo;
-- validar distribuição antes/depois;
-- gerar arquivos de aplicação e auditoria.
-
-Saídas disponíveis no código atual:
-
-- `Ponderacao_<registro>.xlsx`;
-- `Calculo_da_Ponderacao_<registro>.xlsx`;
-- `Pesos_<registro>.sps`;
-- `Base_com_peso_<registro>.sav`;
-- `Relatorio_tecnico_<registro>.xlsx`.
-
-O arquivo `assets/modelo_ponderacao.xlsx` é usado pelo módulo como modelo auxiliar de saída.
-
-Interface: `analises/ponderacao.py`  
-Motor: `core/ponderacao_math.py`
-
----
-
-## Formatos de arquivo
-
-### Entrada geral de dados
-
-O carregador compartilhado (`core/dados.py`) aceita:
-
-- `.csv`;
-- `.xlsx`;
-- `.sav`.
-
-Para CSV, existe tentativa de leitura com codificações alternativas quando necessário. Para SPSS, o projeto usa `pyreadstat` e preserva rótulos de valores para exibição quando disponíveis.
-
-### Excel
-
-Os módulos voltados a relatórios usam principalmente `openpyxl`, pois precisam manter formatação, mesclagens, estilos, impressão e estrutura das planilhas.
-
-### SPSS
-
-Os módulos de ponderação e exclusões usam `.sav` como formato de entrada e podem gerar syntax `.sps` para reprodução das operações no SPSS.
-
----
-
-## Arquitetura do projeto
-
-```text
-Mapa-de-Correspondencia-/
-├── app.py                         # Entrada do Streamlit e roteamento do menu
-├── requirements.txt               # Dependências Python
-├── README.md
-│
-├── analises/                      # Camada de interface Streamlit
-│   ├── base_multiplas.py
-│   ├── base_reduzida.py
-│   ├── codigos_individuais.py
-│   ├── correspondencia_multipla.py
-│   ├── correspondencia_simples.py
-│   ├── exclusoes.py
-│   ├── gerador_amostra.py
-│   ├── legendas.py
-│   ├── ponderacao.py
-│   └── relatorio_automatizado.py
-│
-├── core/                          # Regras de negócio e motores matemáticos
-│   ├── amostra_exportador.py
-│   ├── amostra_math.py
-│   ├── base_multiplas_math.py
-│   ├── ca_math.py
-│   ├── cabecalho_correcao_math.py
-│   ├── cabecalho_imagem.py
-│   ├── capas_resultados_math.py
-│   ├── config.py
-│   ├── dados.py
-│   ├── exclusoes_math.py
-│   ├── legendas_math.py
-│   ├── planilha_utils.py
-│   ├── ponderacao_math.py
-│   └── relatorio_automatizado_math.py
-│
-├── assets/
-│   ├── logo.jpg
-│   └── modelo_ponderacao.xlsx
-│
-├── dados/
-│   └── gerador_amostra/
-│       ├── master_distritos.csv
-│       └── master_municipios.csv
-│
-└── scripts/
-    └── amostrador_build_master.py
-```
-
-### Separação de responsabilidades
-
-A arquitetura segue uma divisão simples:
-
-- `app.py`: configura página, tema, logo e roteamento;
-- `analises/`: interfaces e estados do Streamlit;
-- `core/`: cálculos e manipulações reutilizáveis, sem dependência direta do Streamlit na maior parte dos motores;
-- `assets/`: recursos visuais e modelos;
-- `dados/`: bases locais necessárias para funcionalidades específicas;
-- `scripts/`: tarefas de manutenção/reconstrução que não fazem parte do fluxo diário da interface.
-
----
+Nesse exemplo, o mapa pode ser utilizado para explorar a associação entre as categorias de faixa etária e avaliação do serviço.
 
 ## Instalação
 
-### Pré-requisitos
-
-Recomendado:
-
-- Python **3.12**;
-- `pip` atualizado;
-- Windows, Linux ou macOS.
-
-O ambiente virtual encontrado no projeto original foi criado com Python 3.12.10. Não é necessário reutilizar a pasta `.venv` de outra máquina; o ideal é recriar o ambiente localmente.
-
-### 1. Entre na pasta do projeto
+### 1. Clone ou baixe o projeto
 
 ```bash
-cd Mapa-de-Correspondencia-
+git clone <URL_DO_REPOSITORIO>
+cd app-analises-main
 ```
 
 ### 2. Crie um ambiente virtual
 
-Windows PowerShell:
+No Windows:
 
-```powershell
+```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+.venv\Scripts\activate
 ```
 
-Windows CMD:
-
-```bat
-python -m venv .venv
-.venv\Scripts\activate.bat
-```
-
-Linux/macOS:
+No Linux ou macOS:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-### 3. Atualize o pip
-
-```bash
-python -m pip install --upgrade pip
-```
-
-### 4. Instale as dependências
+### 3. Instale as dependências
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 5. Execute o aplicativo
+### 4. Execute o aplicativo
 
 ```bash
 streamlit run app.py
 ```
 
-O Streamlit normalmente disponibiliza a aplicação em:
+Depois, acesse no navegador o endereço informado pelo Streamlit, normalmente:
 
 ```text
 http://localhost:8501
 ```
 
----
+## Como gerar um Mapa de Correspondência
 
-## Dependências principais
+1. Abra o aplicativo.
+2. Carregue um arquivo CSV, Excel ou SPSS.
+3. No menu lateral, selecione **Mapas de Correspondência**.
+4. Escolha pelo menos duas variáveis categóricas.
+5. Consulte a inércia explicada pelas dimensões.
+6. Ajuste os nomes das legendas, caso necessário.
+7. Ative **Editar rótulos e deslocamentos** para renomear, mover ou remover categorias.
+8. Analise o mapa estático.
+9. Utilize o mapa interativo para explorar e reposicionar visualmente os rótulos.
 
-O `requirements.txt` atual inclui:
+## Personalização dos rótulos
 
+Ao ativar a opção **Editar rótulos e deslocamentos**, é possível:
+
+- Substituir o nome exibido de cada categoria;
+- Ajustar o deslocamento horizontal e vertical do texto;
+- Remover uma categoria da visualização;
+- Reduzir sobreposições em mapas com muitas categorias.
+
+A remoção é apenas visual e não altera a tabela de contingência nem recalcula a análise.
+
+## Formatos suportados
+
+### CSV
+
+- Leitura inicial em UTF-8;
+- Tentativa automática com Latin-1 em caso de erro de codificação.
+
+### Excel
+
+- Arquivos `.xlsx`;
+- Leitura da primeira planilha do arquivo.
+
+### SPSS
+
+- Arquivos `.sav`;
+- Preservação dos valores numéricos para os cálculos;
+- Uso dos rótulos de valores para exibição quando disponíveis.
+
+## Tecnologias utilizadas
+
+- Python;
 - Streamlit;
 - Pandas;
 - NumPy;
 - Matplotlib;
 - Plotly;
 - SciPy;
-- Scikit-learn;
-- Statsmodels;
-- OpenPyXL;
-- XlsxWriter;
 - Pyreadstat;
-- python-pptx;
-- Prince;
 - AdjustText;
-- Requests;
-- Pillow;
-- Sweetviz;
-- Seaborn.
+- OpenPyXL;
+- Scikit-learn;
+- Statsmodels.
 
-Também existem restrições explícitas:
+A biblioteca `prince` permanece entre as dependências por compatibilidade, mas o módulo de Mapas de Correspondência utiliza uma implementação própria baseada em SVD.
 
-```text
-starlette<1.0
-setuptools<81
-```
+## Outros módulos disponíveis
 
----
+Além dos Mapas de Correspondência, o aplicativo possui opções para:
 
-## Uso rápido
+- Tratamento de dados;
+- Geração de gráficos;
+- Relatório automatizado;
+- Relatório em Excel;
+- Análise de resíduos;
+- Análise de correlação;
+- Frequência ponderada;
+- Módulo de predição ainda não implementado nesta versão.
 
-### Para gerar um Mapa de Correspondência
+## Limitações atuais
 
-1. Execute `streamlit run app.py`.
-2. Escolha **Mapas de Correspondência**.
-3. Carregue CSV, XLSX ou SAV.
-4. Selecione duas variáveis.
-5. Confira a inércia explicada.
-6. Ajuste rótulos e posições, se necessário.
-7. Explore os mapas estático e interativo.
+- O mapa trabalha com apenas duas variáveis por análise;
+- A seleção de mais de duas variáveis não gera uma análise de correspondência múltipla;
+- Não há exportação direta do mapa em arquivo pela interface;
+- A aplicação não apresenta contribuições, massas ou qualidade de representação de cada categoria;
+- Categorias raras podem produzir posições extremas e dificultar a interpretação;
+- O sentido dos eixos pode variar sem alterar a interpretação estatística;
+- A logo é carregada de uma URL externa e pode não aparecer quando não houver conexão com a internet.
 
-### Para processar um relatório Excel
+## Boas práticas de análise
 
-1. Escolha **Relatório Automatizado**.
-2. Carregue o `.xlsx` principal.
-3. Avance pelas etapas do assistente.
-4. Forneça arquivos auxiliares quando a etapa solicitar.
-5. Confira o log e a pré-visualização.
-6. Baixe o arquivo processado.
+- Verifique previamente a tabela de contingência;
+- Agrupe categorias com frequências muito pequenas quando isso fizer sentido metodológico;
+- Não interprete somente a proximidade visual;
+- Observe a inércia explicada;
+- Compare o mapa com frequências absolutas, percentuais e resíduos padronizados;
+- Documente qualquer recodificação ou agrupamento realizado na base;
+- Evite concluir causalidade a partir das associações observadas.
 
-### Para ponderar uma base SPSS
-
-1. Escolha **Ponderação**.
-2. Carregue a base `.sav`.
-3. Defina as variáveis e distribuições de universo.
-4. Selecione Razão Simples ou Raking.
-5. Configure tolerância e demais parâmetros.
-6. Confira a validação.
-7. Baixe os arquivos finais desejados.
-
----
-
-## Configurações compartilhadas
-
-O arquivo:
+## Estrutura do projeto
 
 ```text
-core/config.py
+app-analises-main/
+├── app.py
+├── requirements.txt
+└── README.md
 ```
 
-centraliza constantes usadas por diferentes módulos, incluindo:
+## Possíveis melhorias futuras
 
-- variáveis sugeridas nos cruzamentos de correspondência;
-- variáveis de cota usadas em exclusões;
-- nomes amigáveis de variáveis;
-- regras de categorias usadas em configurações específicas dos mapas.
-
-Antes de alterar regras recorrentes do questionário, verifique esse arquivo.
-
----
-
-## Validação e testes
-
-O projeto ainda não possui uma suíte automatizada de testes versionada no ZIP analisado.
-
-Como validação mínima de desenvolvimento, execute:
-
-```bash
-python -m compileall -q app.py analises core scripts
-```
-
-Para uma validação funcional, recomenda-se também:
-
-1. iniciar o Streamlit;
-2. abrir cada módulo afetado pela alteração;
-3. executar com um arquivo real de teste;
-4. abrir os XLSX gerados no Excel/LibreOffice;
-5. validar SAV/SPS no SPSS quando a alteração envolver ponderação ou exclusões;
-6. abrir o PowerPoint gerado quando a alteração envolver múltiplos mapas.
-
----
-
-## Limitações conhecidas
-
-- A opção **Tratamento de Dados** está presente no menu, mas não possui um fluxo funcional implementado no `app.py` desta versão.
-- A Correspondência Simples trabalha com um cruzamento por vez.
-- A qualidade visual de ajustes equivalentes ao AutoFit do Excel pode variar porque `openpyxl` não possui o mesmo motor de renderização do Excel.
-- Algumas rotinas do Relatório Automatizado dependem da estrutura esperada dos relatórios produzidos no fluxo do Instituto Informa.
-- Bases e categorias muito pequenas podem gerar mapas de correspondência instáveis ou difíceis de interpretar.
-- Alterações na estrutura dos relatórios de origem podem exigir atualização dos parsers em `core/`.
-- A reconstrução das bases do Gerador de Amostra depende de arquivos brutos externos do IBGE que não fazem parte do fluxo normal do aplicativo.
-
----
-
-## Boas práticas para desenvolvimento
-
-- Preserve a separação entre interface (`analises/`) e lógica (`core/`).
-- Evite colocar regras matemáticas diretamente nos componentes Streamlit quando elas puderem ser testadas isoladamente.
-- Não versione ambientes virtuais (`.venv`) nem caches (`__pycache__`).
-- Não coloque credenciais, tokens ou caminhos absolutos no código.
-- Valide sempre os arquivos Excel gerados em um aplicativo compatível antes de liberar uma alteração.
-- Ao modificar rotinas portadas de VBA, compare o resultado com um arquivo de referência produzido pelo processo antigo.
-
----
-
-## Dados e privacidade
-
-As bases carregadas pela interface são utilizadas pelo processo da sessão do Streamlit. Ao implantar o aplicativo em servidor, considere:
-
-- controle de acesso;
-- política de retenção de arquivos temporários;
-- proteção de bases de respondentes;
-- logs sem dados pessoais;
-- uso de HTTPS;
-- limpeza periódica de arquivos temporários.
-
-Evite incluir bases reais de respondentes no repositório.
-
----
+- Exportação dos mapas em PNG, SVG, PDF e HTML;
+- Download das coordenadas das categorias em Excel ou CSV;
+- Exibição da tabela de contingência utilizada;
+- Cálculo das contribuições das categorias para cada dimensão;
+- Exibição de cos² e qualidade de representação;
+- Filtros antes da análise;
+- Suporte à Análise de Correspondência Múltipla;
+- Personalização de cores, símbolos, títulos e nomes dos eixos;
+- Geração automática de um relatório interpretativo;
+- Salvamento das configurações de rótulos e deslocamentos.
 
 ## Instituição
 
 Aplicativo desenvolvido para apoiar as rotinas de análise de dados do **Instituto Informa**.
 
----
-
 ## Licença
 
-A licença de uso, distribuição e modificação do projeto ainda deve ser definida formalmente. Até que isso seja feito, trate o código como de uso interno da organização.
+Defina neste espaço a licença aplicável ao projeto e as regras de uso, distribuição e modificação do código.

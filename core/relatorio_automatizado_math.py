@@ -817,116 +817,19 @@ def _altura_staircase_pergunta(altura_calculada):
 # =========================================================
 # Código 05 — Base reduzida (exclusão de colunas, direto na planilha)
 # =========================================================
-def _normalizar_texto_base(valor):
-    return str(valor).strip().upper() if valor is not None else ""
-
-
-def _linha_vazia_ate_coluna(ws, r, max_col):
-    return all(ws.cell(row=r, column=c).value is None for c in range(1, max_col + 1))
-
-
-def _encontrar_inicio_bloco(ws, linha_base, max_col):
-    r = linha_base
-    while r > 1 and not _linha_vazia_ate_coluna(ws, r - 1, max_col):
-        r -= 1
-    return r
-
-
-def _encontrar_fim_bloco(ws, linha_base, max_col):
-    r = linha_base
-    max_row = ws.max_row
-    while r < max_row and not _linha_vazia_ate_coluna(ws, r + 1, max_col):
-        r += 1
-    return r
-
-
-def _excluir_coluna_no_bloco(ws, linha_inicio, linha_fim, coluna, max_col):
-    from copy import copy as _copy_style
-    for r in range(linha_inicio, linha_fim + 1):
-        for c in range(coluna, max_col):
-            origem = ws.cell(row=r, column=c + 1)
-            destino = ws.cell(row=r, column=c)
-            destino.value = origem.value
-            if origem.has_style:
-                destino.font = _copy_style(origem.font)
-                destino.border = _copy_style(origem.border)
-                destino.fill = _copy_style(origem.fill)
-                destino.number_format = origem.number_format
-                destino.protection = _copy_style(origem.protection)
-                destino.alignment = _copy_style(origem.alignment)
-        ultima = ws.cell(row=r, column=max_col)
-        ultima.value = None
-        ultima.border = Border()
-
-
-def _excluir_colunas_base_reduzida(ws, limite=25):
-    """Só a parte de exclusão de colunas do código 05 (ver aplicar_codigo_05 para o restante)."""
-    max_col_geral = ws.max_column
-    linhas_base = [
-        r for r in range(1, ws.max_row + 1)
-        if _normalizar_texto_base(ws.cell(row=r, column=1).value) == "BASE REDUZIDA"
-    ]
-
-    colunas_excluidas_total = 0
-
-    for linha_base in linhas_base:
-        inicio = _encontrar_inicio_bloco(ws, linha_base, max_col_geral)
-        fim = _encontrar_fim_bloco(ws, linha_base, max_col_geral)
-
-        ultima_col_linha = 1
-        for c in range(1, max_col_geral + 1):
-            if ws.cell(row=linha_base, column=c).value is not None:
-                ultima_col_linha = c
-
-        colunas_para_excluir = []
-        for c in range(ultima_col_linha, 1, -1):
-            valor = ws.cell(row=linha_base, column=c).value
-            numero = None
-            if isinstance(valor, (int, float)):
-                numero = valor
-            elif isinstance(valor, str):
-                limpo = "".join(ch for ch in valor.replace(",", ".") if ch.isdigit() or ch in ".-")
-                if limpo:
-                    try:
-                        numero = float(limpo)
-                    except ValueError:
-                        numero = None
-            if numero is not None and numero < limite:
-                colunas_para_excluir.append(c)
-
-        if not colunas_para_excluir:
-            continue
-
-        faixas_capturadas = []
-        for rng in list(ws.merged_cells.ranges):
-            if rng.min_row <= fim and rng.max_row >= inicio:
-                # guarda o valor de verdade (só a célula do canto superior
-                # esquerdo de uma mesclagem tem o texto) para restaurar
-                # depois — sem isso, o deslocamento de coluna pode
-                # sobrescrever esse valor com uma célula vizinha vazia
-                valor_original = ws.cell(row=rng.min_row, column=rng.min_col).value
-                faixas_capturadas.append((rng.min_row, rng.min_col, rng.max_row, rng.max_col, valor_original))
-                ws.unmerge_cells(str(rng))
-
-        for col_excluir in colunas_para_excluir:  # já em ordem decrescente
-            _excluir_coluna_no_bloco(ws, inicio, fim, col_excluir, max_col_geral)
-            colunas_excluidas_total += 1
-
-        for min_row, min_col, max_row, max_col, valor_original in faixas_capturadas:
-            excluidas_antes = sum(1 for c in colunas_para_excluir if c < min_col)
-            excluidas_dentro = sum(1 for c in colunas_para_excluir if min_col <= c <= max_col)
-            novo_min_col = min_col - excluidas_antes
-            novo_max_col = max_col - excluidas_antes - excluidas_dentro
-            if novo_max_col >= novo_min_col:
-                ws.cell(row=min_row, column=novo_min_col).value = valor_original
-                if novo_max_col > novo_min_col:
-                    ws.merge_cells(
-                        start_row=min_row, start_column=novo_min_col,
-                        end_row=max_row, end_column=novo_max_col
-                    )
-
-    return colunas_excluidas_total
-
+# A lógica de detectar blocos de tabela e excluir colunas de "Base
+# reduzida" abaixo de um limite (com mesclagem preservada) mora em
+# core/planilha_utils.py — compartilhada com o Processador de Base
+# Reduzida standalone (analises/base_reduzida.py), pra não duplicar essa
+# lógica (já testada com arquivo real, inclusive com cabeçalho mesclado
+# tipo "Regiões") em dois lugares.
+from core.planilha_utils import (
+    normalizar_texto_maiusculo as _normalizar_texto_base,
+    linha_vazia_ate_coluna as _linha_vazia_ate_coluna,
+    encontrar_inicio_bloco as _encontrar_inicio_bloco,
+    encontrar_fim_bloco as _encontrar_fim_bloco,
+    excluir_colunas_base_reduzida as _excluir_colunas_base_reduzida,
+)
 
 def _remover_linha_extra_multipla(ws):
     """

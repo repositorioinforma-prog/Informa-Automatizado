@@ -16,11 +16,13 @@ Não depende do `dados` carregado no início do app: tem upload próprio.
 """
 import io
 import os
+import base64
 
 import openpyxl
 import streamlit as st
 
 from core.planilha_utils import worksheet_para_html
+from core.pdf_preview import gerar_pdf_preview, libreoffice_disponivel
 from core.cabecalho_imagem import inserir_imagem_cabecalho
 from core.cabecalho_correcao_math import parsear_blocos_cabecalho_referencia, aplicar_codigo_13
 from core.capas_resultados_math import aplicar_codigo_15
@@ -218,23 +220,53 @@ def modulo_codigos_individuais():
         )
 
         st.subheader("Pré-visualização do resultado")
-        wb_preview = openpyxl.load_workbook(io.BytesIO(st.session_state["ci_resultado_bytes"]))
-        aba_escolhida = st.selectbox(
-            "Aba", wb_preview.sheetnames, key="ci_preview_aba"
-        ) if len(wb_preview.sheetnames) > 1 else wb_preview.sheetnames[0]
-        ws_preview = wb_preview[aba_escolhida]
 
-        html_preview, truncou_linhas, truncou_colunas = worksheet_para_html(ws_preview)
-        st.components.v1.html(html_preview, height=620, scrolling=True)
+        if libreoffice_disponivel():
+            if st.button("📄 Gerar pré-visualização em PDF (relatório inteiro)", key="ci_gerar_pdf_preview"):
+                with st.spinner("Convertendo o relatório inteiro pra PDF — pode levar alguns segundos..."):
+                    try:
+                        st.session_state["ci_pdf_preview_bytes"] = gerar_pdf_preview(st.session_state["ci_resultado_bytes"])
+                    except RuntimeError as e:
+                        st.session_state.pop("ci_pdf_preview_bytes", None)
+                        st.error(f"Não consegui gerar a pré-visualização em PDF: {e}")
 
-        avisos = []
-        if truncou_linhas:
-            avisos.append(f"mostrando as primeiras 150 linhas de {ws_preview.max_row}")
-        if truncou_colunas:
-            avisos.append(f"mostrando as primeiras 30 colunas de {ws_preview.max_column}")
-        aviso_txt = " e ".join(avisos)
-        st.caption(
-            (f"⚠️ Pré-visualização parcial ({aviso_txt}) — " if aviso_txt else "")
-            + "reproduz mesclagem, cor de fundo, negrito/itálico, alinhamento e bordas, "
-            "mas é uma aproximação; o arquivo baixado é a fonte da verdade."
-        )
+            if "ci_pdf_preview_bytes" in st.session_state:
+                pdf_bytes = st.session_state["ci_pdf_preview_bytes"]
+                base64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+                st.components.v1.html(
+                    f'<iframe src="data:application/pdf;base64,{base64_pdf}" '
+                    f'width="100%" height="900" style="border:1px solid #d1d5db;"></iframe>',
+                    height=920,
+                )
+                st.download_button(
+                    "Baixar esse PDF de pré-visualização", data=pdf_bytes,
+                    file_name="preview_resultado.pdf", mime="application/pdf",
+                    key="ci_download_pdf_preview",
+                )
+        else:
+            st.caption(
+                "⚠️ Pré-visualização em PDF não disponível neste ambiente "
+                "(LibreOffice não está instalado)."
+            )
+
+        with st.expander("Pré-visualização rápida em tabela (mais leve, só valores aproximados)"):
+            wb_preview = openpyxl.load_workbook(io.BytesIO(st.session_state["ci_resultado_bytes"]))
+            aba_escolhida = st.selectbox(
+                "Aba", wb_preview.sheetnames, key="ci_preview_aba"
+            ) if len(wb_preview.sheetnames) > 1 else wb_preview.sheetnames[0]
+            ws_preview = wb_preview[aba_escolhida]
+
+            html_preview, truncou_linhas, truncou_colunas = worksheet_para_html(ws_preview)
+            st.components.v1.html(html_preview, height=620, scrolling=True)
+
+            avisos = []
+            if truncou_linhas:
+                avisos.append(f"mostrando as primeiras 150 linhas de {ws_preview.max_row}")
+            if truncou_colunas:
+                avisos.append(f"mostrando as primeiras 30 colunas de {ws_preview.max_column}")
+            aviso_txt = " e ".join(avisos)
+            st.caption(
+                (f"⚠️ Pré-visualização parcial ({aviso_txt}) — " if aviso_txt else "")
+                + "reproduz mesclagem, cor de fundo, negrito/itálico, alinhamento e bordas, "
+                "mas é uma aproximação; o arquivo baixado é a fonte da verdade."
+            )

@@ -18,4 +18,3 @@ pyreadstat
 XlsxWriter
 python-pptx
 setuptools<81
-pdfkit

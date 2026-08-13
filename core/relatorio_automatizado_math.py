@@ -698,6 +698,22 @@ def _com_horizontal_vertical(alinhamento_atual, horizontal, vertical):
 # =========================================================
 # Código 09 — Ajusta a altura das labels (autofit aproximado)
 # =========================================================
+_GATILHOS_ALTURA_FIXA_30 = ("masculino", "feminino", "ensino")
+
+
+def _linha_tem_gatilho_altura_fixa(ws, r):
+    """Linhas de subcategoria de Sexo ('Masculino'/'Feminino') e
+    Escolaridade ('Ensino...') têm altura fixa de 30, pré-definida —
+    não passam pela estimativa normal do código 09."""
+    for c in range(1, ws.max_column + 1):
+        valor = ws.cell(row=r, column=c).value
+        if isinstance(valor, str):
+            texto = valor.strip().lower()
+            if any(texto.startswith(gatilho) for gatilho in _GATILHOS_ALTURA_FIXA_30):
+                return True
+    return False
+
+
 def aplicar_codigo_09(ws):
     """
     Para toda célula com quebra de linha (WrapText) ativada, estima a
@@ -707,9 +723,19 @@ def aplicar_codigo_09(ws):
     (pode até diminuir uma linha que estava alta demais) — então aqui
     também aplica sempre a estimativa, não só quando ela é maior que a
     altura atual.
+
+    Exceção: linhas de subcategoria de Sexo ('Masculino'/'Feminino') e
+    Escolaridade ('Ensino...') sempre ficam com altura fixa 30, em vez
+    da estimativa — um valor pré-definido, não calculado.
     """
     alterados = 0
     for r in range(1, ws.max_row + 1):
+        if _linha_tem_gatilho_altura_fixa(ws, r):
+            if ws.row_dimensions[r].height != 30.0:
+                ws.row_dimensions[r].height = 30.0
+                alterados += 1
+            continue
+
         maior_estim = None
         for c in range(1, ws.max_column + 1):
             cel = ws.cell(row=r, column=c)
@@ -903,6 +929,13 @@ def aplicar_codigo_05(ws, limite=25):
         left=1.5 / 2.54, right=1.3 / 2.54, top=2.5 / 2.54, bottom=2 / 2.54,
         header=1.3 / 2.54, footer=1.3 / 2.54,
     )
+    # Escala de impressão em 100% (Layout de Página > Escala), não o
+    # modo "ajustar a X página(s) de largura" — os dois são mutuamente
+    # exclusivos no Excel via pageSetUpPr.fitToPage.
+    ws.sheet_properties.pageSetUpPr.fitToPage = False
+    ws.page_setup.fitToWidth = None
+    ws.page_setup.fitToHeight = None
+    ws.page_setup.scale = 100
 
     # O Excel parece recalcular a largura "em caracteres" exibida usando
     # a métrica da fonte DIN (aplicada nas células logo abaixo) em vez da
@@ -916,9 +949,11 @@ def aplicar_codigo_05(ws, limite=25):
     # do Excel, fonte diferente etc.), essa constante pode precisar ser
     # recalibrada.
     AJUSTE_LARGURA_COLUNA_DIN = 0.78
-    ws.column_dimensions["A"].width = 20.67 + AJUSTE_LARGURA_COLUNA_DIN
-    for c in range(2, ws.max_column + 1):
-        ws.column_dimensions[get_column_letter(c)].width = 8.89 + AJUSTE_LARGURA_COLUNA_DIN
+    ws.column_dimensions["A"].width = 21 + AJUSTE_LARGURA_COLUNA_DIN
+    if ws.max_column >= 2:
+        ws.column_dimensions["B"].width = 8 + AJUSTE_LARGURA_COLUNA_DIN
+    for c in range(3, ws.max_column + 1):
+        ws.column_dimensions[get_column_letter(c)].width = 8.67 + AJUSTE_LARGURA_COLUNA_DIN
 
     for r in range(1, ws.max_row + 1):
         cel = ws.cell(row=r, column=1)
@@ -1009,20 +1044,19 @@ def aplicar_codigo_07(ws):
             return True
         return False
 
-    # Fixa a impressão em "1 página de largura por altura automática".
-    # Fixar só a LARGURA evita que uma coluna "fantasma" no fim da faixa
-    # usada da planilha (comum em exports do SPSS) crie uma segunda
-    # coluna de páginas ao lado da primeira (o Excel mostraria algo como
-    # "Página 1" e "Página 19" lado a lado, em vez de uma sequência
-    # única). Deixar a ALTURA automática (fitToHeight=0) garante que as
-    # quebras de página manuais inseridas abaixo continuem controlando a
-    # paginação vertical normalmente — diferente de "ajustar tudo numa
-    # única página" (fitToWidth=1 + fitToHeight=1, comum em exports do
-    # SPSS), que faz o Excel ignorar as quebras manuais e nenhuma quebra
-    # aparece.
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 0
+    # Fixa a impressão em escala 100% (modo "Ajustar a: 100% do tamanho
+    # normal", não o modo "Ajustar a N página(s) de largura") — o Excel
+    # trata os dois como mutuamente exclusivos via pageSetUpPr.fitToPage.
+    # Com fitToPage=False + scale=100, o Excel usa a paginação natural da
+    # planilha (incluindo as quebras manuais inseridas abaixo) sem
+    # recalcular nada pra "caber" num número de páginas — mais previsível
+    # do que o modo "ajustar largura" que usávamos antes (que também
+    # evitava o bug de quebra manual sendo ignorada, mas por um caminho
+    # mais indireto).
+    ws.sheet_properties.pageSetUpPr.fitToPage = False
+    ws.page_setup.fitToWidth = None
+    ws.page_setup.fitToHeight = None
+    ws.page_setup.scale = 100
 
     def _e_gatilho(valor):
         texto = str(valor) if valor is not None else ""

@@ -465,7 +465,7 @@ def gerar_workbook_com_base(caminho_multiplas, blocos_multiplas, linhas_base, ab
                     cel_ref_col, cel_dest,
                     bottom_override=bordas_col.get(col, lado_vazio),
                     negrito=False,
-                    formato_numero="#,##0" if valor is not None else None,
+                    formato_numero="0" if valor is not None else None,
                 )
                 cel_dest.value = valor
 

@@ -263,8 +263,8 @@ def main():
     analise = st.sidebar.selectbox(
         "Escolha a análise",
         (
-            "Mapas de Correspondência",
-            "Mapas de Correspondência (Múltiplas Variáveis)",
+            "[Antigo] Mapas de Correspondência - V1",
+            "[Atual] Mapas de Correspondência - V2",
             "Processador de Base Reduzida",
             "Exclusões",
             "Base nas Múltiplas",
@@ -315,10 +315,10 @@ def main():
         dados, dados_exibicao = carregar_dados(uploaded_file)
 
         if dados is not None:
-            if analise == "Mapas de Correspondência":
+            if analise == "[Antigo] Mapas de Correspondência - V1":
                 analise_correspondencia(dados)
 
-            elif analise == "Mapas de Correspondência (Múltiplas Variáveis)":
+            elif analise == "[Atual] Mapas de Correspondência - V2":
                 analise_correspondencia_multipla(dados)
 
     else:

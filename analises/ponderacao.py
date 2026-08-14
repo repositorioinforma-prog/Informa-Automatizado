@@ -6,6 +6,7 @@ import io
 import os
 import re
 import tempfile
+import zipfile
 from collections import OrderedDict
 from copy import copy
 from datetime import datetime, timezone
@@ -17,6 +18,8 @@ import pandas as pd
 import pyreadstat
 import streamlit as st
 from openpyxl.comments import Comment
+from openpyxl.formatting.formatting import ConditionalFormattingList
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from core.ponderacao_math import (
@@ -26,6 +29,10 @@ from core.ponderacao_math import (
     frequencia_percentual,
     gerar_syntax_spss,
     resumo_pesos,
+)
+from core.ponderacao_exclusoes_math import (
+    gerar_syntax_exclusao_ids,
+    sugerir_exclusoes_ponderacao,
 )
 
 
@@ -100,6 +107,180 @@ def _nome_arquivo_seguro(texto: str) -> str:
     nome = re.sub(r"[^0-9A-Za-zÀ-ÖØ-öø-ÿ._ -]+", "_", str(texto)).strip(" ._")
     nome = re.sub(r"\s+", "_", nome)
     return nome[:100] or "ponderacao"
+
+
+def _sugerir_variavel_id(dados: pd.DataFrame) -> str | None:
+    """Sugere um identificador único para a syntax de exclusão."""
+    if dados.empty:
+        return None
+
+    nomes_preferidos = (
+        "id",
+        "id_entrevista",
+        "identificador",
+        "codigo",
+        "código",
+        "nquest",
+        "nr",
+        "respondentid",
+        "respondent_id",
+    )
+    normalizadas = {str(c).strip().casefold(): c for c in dados.columns}
+    for nome in nomes_preferidos:
+        coluna = normalizadas.get(nome.casefold())
+        if coluna is not None and dados[coluna].notna().all() and dados[coluna].is_unique:
+            return coluna
+
+    for coluna in dados.columns:
+        serie = dados[coluna]
+        texto = str(coluna).strip().casefold()
+        if "id" in texto and serie.notna().all() and serie.is_unique:
+            return coluna
+
+    for coluna in dados.columns:
+        serie = dados[coluna]
+        if serie.notna().all() and serie.is_unique:
+            return coluna
+    return None
+
+def _calcular_ponderacao_para_teste_exclusao(
+    dados: pd.DataFrame,
+    alvos,
+    labels_por_variavel: dict,
+    metodo_ui: str,
+    tolerancia: float,
+    max_iter: int,
+):
+    if metodo_ui.startswith("Método atual"):
+        return calcular_razao_simples(
+            dados,
+            alvos,
+            labels=labels_por_variavel,
+            tolerancia_pp=float(tolerancia),
+        )
+    return calcular_raking(
+        dados,
+        alvos,
+        labels=labels_por_variavel,
+        tolerancia_pp=float(tolerancia),
+        max_iteracoes=int(max_iter),
+    )
+
+
+def _refinar_prefixo_exclusoes_pelo_peso(
+    dados: pd.DataFrame,
+    sugestao,
+    resultado_atual,
+    alvos,
+    labels_por_variavel: dict,
+    metodo_ui: str,
+    tolerancia: float,
+    max_iter: int,
+):
+    """Procura o melhor N dentro da faixa permitida, após reponderar cada cenário avaliado.
+
+    O N mínimo funciona como piso, não como obrigação. Para bases grandes, a busca
+    usa uma varredura ampla e depois refina a vizinhança do melhor ponto encontrado.
+    Em empates, preserva mais entrevistas (menor número de exclusões).
+    """
+    total = len(sugestao.indices_excluir)
+    melhor_k = 0
+    melhor_resultado = resultado_atual
+    melhor_valor = float(resultado_atual.maior_diferenca_pp)
+
+    if total == 0:
+        return melhor_k, melhor_resultado
+
+    avaliados: dict[int, tuple[float, object]] = {
+        0: (melhor_valor, resultado_atual)
+    }
+
+    def avaliar(k: int) -> None:
+        k = max(0, min(int(k), total))
+        if k in avaliados:
+            return
+        dados_teste = dados.drop(index=sugestao.indices_excluir[:k])
+        try:
+            teste = _calcular_ponderacao_para_teste_exclusao(
+                dados_teste,
+                alvos,
+                labels_por_variavel,
+                metodo_ui,
+                tolerancia,
+                max_iter,
+            )
+        except Exception:
+            return
+        valor = float(teste.maior_diferenca_pp)
+        if np.isfinite(valor):
+            avaliados[k] = (valor, teste)
+
+    def melhor_avaliado() -> tuple[int, float, object]:
+        candidatos = [
+            (k, valor_resultado[0], valor_resultado[1])
+            for k, valor_resultado in avaliados.items()
+            if np.isfinite(valor_resultado[0])
+        ]
+        # Primeiro menor diferença; em empate, menor k para preservar mais casos.
+        return min(candidatos, key=lambda item: (item[1], item[0]))
+
+    metodo_simples = metodo_ui.startswith("Método atual")
+    limite_varredura_completa = 120 if metodo_simples else 24
+
+    if total <= limite_varredura_completa:
+        for k in range(1, total + 1):
+            avaliar(k)
+    else:
+        # Etapa 1: cobre toda a faixa do N atual até o piso informado.
+        quantidade = 60 if metodo_simples else 12
+        pontos = sorted(
+            set(
+                max(1, min(total, int(round(x))))
+                for x in np.linspace(1, total, num=quantidade, endpoint=True)
+            )
+        )
+        for k in pontos:
+            avaliar(k)
+
+        # Etapa 2: refina a vizinhança do melhor ponto da varredura ampla.
+        if metodo_simples:
+            melhor_k_tmp, _, _ = melhor_avaliado()
+            grade = sorted(set([0, total, *pontos]))
+            pos = grade.index(melhor_k_tmp) if melhor_k_tmp in grade else 0
+            esquerda = grade[max(0, pos - 1)]
+            direita = grade[min(len(grade) - 1, pos + 1)]
+            for k in range(esquerda + 1, direita):
+                avaliar(k)
+        else:
+            # Raking é mais caro; estreita a faixa em duas rodadas antes da busca local.
+            for _ in range(2):
+                melhor_k_tmp, _, _ = melhor_avaliado()
+                grade = sorted(set([0, total, *avaliados.keys()]))
+                pos = grade.index(melhor_k_tmp)
+                esquerda = grade[max(0, pos - 1)]
+                direita = grade[min(len(grade) - 1, pos + 1)]
+                if direita - esquerda <= 8:
+                    break
+                extras = sorted(
+                    set(
+                        int(round(x))
+                        for x in np.linspace(esquerda, direita, num=7, endpoint=True)
+                    )
+                )
+                for k in extras:
+                    avaliar(k)
+            melhor_k_tmp, _, _ = melhor_avaliado()
+            grade = sorted(set([0, total, *avaliados.keys()]))
+            pos = grade.index(melhor_k_tmp)
+            esquerda = grade[max(0, pos - 1)]
+            direita = grade[min(len(grade) - 1, pos + 1)]
+            if direita - esquerda <= 10:
+                for k in range(esquerda + 1, direita):
+                    avaliar(k)
+
+    melhor_k, melhor_valor, melhor_resultado = melhor_avaliado()
+    return melhor_k, melhor_resultado
+
 
 def _label_categoria(labels_var, codigo):
     if codigo in labels_var:
@@ -267,18 +448,24 @@ def _perfil_sessao() -> dict:
 
 
 def _importar_perfil_universo_xlsx(conteudo: bytes, nome_arquivo: str) -> dict:
-    """Importa apenas as metas de Universo da aba Registro de um histórico anterior."""
+    """Importa metas de Universo de um modelo preenchido ou registro histórico."""
     try:
         wb = openpyxl.load_workbook(io.BytesIO(conteudo), data_only=True, read_only=True)
     except Exception as exc:
         raise ValueError(f"Não foi possível abrir o Excel informado: {exc}") from exc
 
-    if "Registro" not in wb.sheetnames:
+    if "Universo" in wb.sheetnames:
+        ws = wb["Universo"]
+        nome_aba = "Universo"
+    elif "Registro" in wb.sheetnames:
+        ws = wb["Registro"]
+        nome_aba = "Registro"
+    else:
         raise ValueError(
-            "O arquivo não possui a aba 'Registro'. Use um registro histórico gerado pelo módulo de Ponderação."
+            "O arquivo precisa possuir a aba 'Universo' (modelo preenchido) ou "
+            "'Registro' (ponderação histórica gerada pelo módulo)."
         )
 
-    ws = wb["Registro"]
     cabecalho = None
     mapa_colunas = {}
     obrigatorias = {"Variável SPSS", "Código SPSS", "% Universo"}
@@ -293,7 +480,7 @@ def _importar_perfil_universo_xlsx(conteudo: bytes, nome_arquivo: str) -> dict:
 
     if cabecalho is None:
         raise ValueError(
-            "Não encontrei no 'Registro' as colunas Variável SPSS, Código SPSS e % Universo."
+            f"Não encontrei na aba '{nome_aba}' as colunas Variável SPSS, Código SPSS e % Universo."
         )
 
     perfil = _perfil_vazio(f"Importado de {nome_arquivo}")
@@ -317,11 +504,11 @@ def _importar_perfil_universo_xlsx(conteudo: bytes, nome_arquivo: str) -> dict:
             percentual = float(universo)
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                f"% Universo inválido na linha {r} da aba Registro: {universo!r}."
+                f"% Universo inválido na linha {r} da aba {nome_aba}: {universo!r}."
             ) from exc
         if not np.isfinite(percentual) or not 0 <= percentual <= 100:
             raise ValueError(
-                f"% Universo fora de 0 a 100 na linha {r} da aba Registro: {percentual:g}."
+                f"% Universo fora de 0 a 100 na linha {r} da aba {nome_aba}: {percentual:g}."
             )
 
         nome_var = str(variavel).strip()
@@ -349,9 +536,429 @@ def _importar_perfil_universo_xlsx(conteudo: bytes, nome_arquivo: str) -> dict:
         total_alvos += 1
 
     if not total_alvos:
-        raise ValueError("A aba Registro não contém nenhum percentual de Universo reutilizável.")
+        raise ValueError(f"A aba {nome_aba} não contém nenhum percentual de Universo preenchido.")
 
     return perfil
+
+
+def _gerar_modelo_universo_excel(
+    dados: pd.DataFrame,
+    meta,
+    value_labels: dict,
+    variaveis: list[str],
+    arquivo_origem: str,
+) -> bytes:
+    """Gera um modelo reutilizável do Universo a partir da estrutura do SAV atual."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Universo"
+    ws.sheet_view.showGridLines = False
+
+    azul = "1F4E78"
+    azul_claro = "D9EAF7"
+    amarelo = "FFF2CC"
+    verde = "E2F0D9"
+    cinza = "E7E6E6"
+    borda_fina = Side(style="thin", color="B7B7B7")
+    borda = Border(left=borda_fina, right=borda_fina, top=borda_fina, bottom=borda_fina)
+
+    ws.merge_cells("A1:E1")
+    ws["A1"] = "MODELO DE UNIVERSO - PONDERAÇÃO"
+    ws["A1"].font = Font(name="Arial", size=14, bold=True, color="FFFFFF")
+    ws["A1"].fill = PatternFill("solid", fgColor=azul)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 24
+
+    ws["A2"] = "Arquivo SPSS de origem"
+    ws["B2"] = arquivo_origem
+    ws["A3"] = "Orientação"
+    ws["B3"] = (
+        "Preencha somente a coluna % Universo. Não altere Variável SPSS nem Código SPSS, "
+        "pois o Analítico usa esses dois campos para reaplicar o Universo com segurança."
+    )
+    ws.merge_cells("B2:E2")
+    ws.merge_cells("B3:E3")
+    for celula in (ws["A2"], ws["A3"]):
+        celula.font = Font(name="Arial", size=10, bold=True)
+        celula.fill = PatternFill("solid", fgColor=cinza)
+        celula.border = borda
+    for celula in (ws["B2"], ws["B3"]):
+        celula.font = Font(name="Arial", size=10)
+        celula.alignment = Alignment(vertical="center", wrap_text=True)
+        celula.border = borda
+    ws.row_dimensions[3].height = 34
+
+    cabecalho = 5
+    colunas = [
+        "Variável SPSS",
+        "Rótulo da variável",
+        "Código SPSS",
+        "Categoria",
+        "% Universo",
+    ]
+    for c, texto in enumerate(colunas, 1):
+        celula = ws.cell(cabecalho, c, texto)
+        celula.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        celula.fill = PatternFill("solid", fgColor=azul)
+        celula.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        celula.border = borda
+    ws.row_dimensions[cabecalho].height = 30
+
+    linha = cabecalho + 1
+    faixas_variaveis = []
+    for variavel in variaveis:
+        tabela = _tabela_editor(
+            dados,
+            variavel,
+            (value_labels or {}).get(variavel, {}) or {},
+        )
+        rotulo = _nome_exibicao_variavel(meta, variavel)
+        inicio = linha
+        for _, item in tabela.iterrows():
+            valores = [
+                variavel,
+                rotulo,
+                item["Código"],
+                item["Categoria"],
+                None,
+            ]
+            for c, valor in enumerate(valores, 1):
+                celula = ws.cell(linha, c, valor)
+                celula.font = Font(name="Arial", size=10)
+                celula.border = borda
+                celula.alignment = Alignment(vertical="center", wrap_text=True)
+                if c <= 4:
+                    celula.fill = PatternFill("solid", fgColor=verde)
+                else:
+                    celula.fill = PatternFill("solid", fgColor=amarelo)
+                    celula.font = Font(name="Arial", size=10, color="0000FF")
+                    celula.number_format = "0.00"
+            linha += 1
+        fim = linha - 1
+        if fim >= inicio:
+            faixas_variaveis.append((variavel, rotulo, inicio, fim))
+
+    if linha > cabecalho + 1:
+        validacao = DataValidation(
+            type="decimal",
+            operator="between",
+            formula1="0",
+            formula2="100",
+            allow_blank=True,
+        )
+        validacao.error = "Informe um percentual entre 0 e 100."
+        validacao.errorTitle = "Percentual inválido"
+        validacao.prompt = "Preencha o percentual do Universo desta categoria."
+        validacao.promptTitle = "% Universo"
+        ws.add_data_validation(validacao)
+        validacao.add(f"E{cabecalho + 1}:E{linha - 1}")
+
+    ws.freeze_panes = f"A{cabecalho + 1}"
+    ws.auto_filter.ref = f"A{cabecalho}:E{max(cabecalho, linha - 1)}"
+    larguras = {"A": 19, "B": 38, "C": 14, "D": 34, "E": 16}
+    for coluna, largura in larguras.items():
+        ws.column_dimensions[coluna].width = largura
+    for r in range(cabecalho + 1, linha):
+        _ajustar_altura_linha(
+            ws,
+            r,
+            [
+                (ws.cell(r, 2).value, "B", 1.05),
+                (ws.cell(r, 4).value, "D", 1.05),
+            ],
+            minima=18.0,
+        )
+
+    conf = wb.create_sheet("Conferência")
+    conf.sheet_view.showGridLines = False
+    conf.merge_cells("A1:D1")
+    conf["A1"] = "CONFERÊNCIA DO UNIVERSO"
+    conf["A1"].font = Font(name="Arial", size=14, bold=True, color="FFFFFF")
+    conf["A1"].fill = PatternFill("solid", fgColor=azul)
+    conf["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    headers_conf = ["Variável SPSS", "Rótulo da variável", "Total Universo (%)", "Status"]
+    for c, texto in enumerate(headers_conf, 1):
+        celula = conf.cell(3, c, texto)
+        celula.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        celula.fill = PatternFill("solid", fgColor=azul)
+        celula.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        celula.border = borda
+    for idx, (variavel, rotulo, _inicio, _fim) in enumerate(faixas_variaveis, start=4):
+        conf.cell(idx, 1, variavel)
+        conf.cell(idx, 2, rotulo)
+        conf.cell(idx, 3, f'=SUMIF(Universo!$A:$A,A{idx},Universo!$E:$E)')
+        conf.cell(idx, 4, f'=IF(ABS(C{idx}-100)<=0.1,"OK","REVISAR")')
+        for c in range(1, 5):
+            celula = conf.cell(idx, c)
+            celula.font = Font(name="Arial", size=10)
+            celula.border = borda
+            celula.alignment = Alignment(vertical="center", wrap_text=True)
+        conf.cell(idx, 3).number_format = "0.00"
+    for coluna, largura in {"A": 19, "B": 38, "C": 20, "D": 14}.items():
+        conf.column_dimensions[coluna].width = largura
+    conf.freeze_panes = None
+
+    try:
+        wb.calculation.fullCalcOnLoad = True
+        wb.calculation.forceFullCalc = True
+        wb.calculation.calcMode = "auto"
+    except Exception:
+        pass
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def _gerar_relatorio_sugestao_exclusoes_excel(
+    sugestao,
+    id_var: str,
+    identificacao: str,
+    metodo: str,
+    tolerancia_pp: float,
+    maior_ponderada_antes_pp: float,
+    maior_ponderada_depois_pp: float | None,
+    objetivo_exclusao: str = "Encontrar a melhor ponderação até o N mínimo",
+) -> bytes:
+    """Documenta a sugestão de exclusões sem alterar a base original."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Resumo"
+    ws.sheet_view.showGridLines = False
+
+    azul = "1F4E78"
+    amarelo = "FFF2CC"
+    cinza = "E7E6E6"
+    vermelho = "F4CCCC"
+    verde = "D9EAD3"
+    borda = Border(
+        left=Side(style="thin", color="B7B7B7"),
+        right=Side(style="thin", color="B7B7B7"),
+        top=Side(style="thin", color="B7B7B7"),
+        bottom=Side(style="thin", color="B7B7B7"),
+    )
+
+    ws.merge_cells("A1:D1")
+    ws["A1"] = "Sugestão de exclusões para teste de ponderação"
+    ws["A1"].font = Font(name="Arial", size=14, bold=True, color="FFFFFF")
+    ws["A1"].fill = PatternFill("solid", fgColor=azul)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 25
+
+    modo_n_exato = objetivo_exclusao.startswith("Chegar exatamente")
+    resumo_itens = [
+        ("Projeto", identificacao),
+        ("Variável de ID", id_var),
+        ("Método de ponderação", metodo),
+        ("Objetivo das exclusões", objetivo_exclusao),
+        ("Tolerância", float(tolerancia_pp)),
+        ("N inicial", int(sugestao.n_inicial)),
+    ]
+    if modo_n_exato:
+        resumo_itens.extend([
+            ("N-alvo exato informado", int(sugestao.n_minimo)),
+            ("Máximo de exclusões até o N-alvo", int(sugestao.limite_exclusoes)),
+            ("N-alvo atingido", "SIM" if getattr(sugestao, "atingiu_n_alvo", False) else "NÃO"),
+            ("Exclusões que faltariam para o N-alvo", int(getattr(sugestao, "faltam_exclusoes_para_alvo", 0))),
+        ])
+    else:
+        resumo_itens.extend([
+            ("N mínimo permitido", int(sugestao.n_minimo)),
+            ("Faixa de N permitida", f"{int(sugestao.n_inicial)} até {int(sugestao.n_minimo)}"),
+            ("Máximo de exclusões permitidas", int(sugestao.limite_exclusoes)),
+            ("N recomendado pelo assistente", int(sugestao.n_final)),
+        ])
+    resumo_itens.extend([
+        ("Base mínima protegida por categoria", int(getattr(sugestao, "base_minima_categoria", 0))),
+        ("Exclusões sugeridas", len(sugestao.ids_excluir)),
+        ("N após sugestão", int(sugestao.n_final)),
+        ("Maior diferença bruta antes (p.p.)", float(sugestao.maior_diferenca_bruta_antes_pp)),
+        ("Maior diferença bruta após (p.p.)", float(sugestao.maior_diferenca_bruta_depois_pp)),
+        ("Maior diferença ponderada antes (p.p.)", float(maior_ponderada_antes_pp)),
+        (
+            "Maior diferença ponderada estimada após (p.p.)",
+            None if maior_ponderada_depois_pp is None else float(maior_ponderada_depois_pp),
+        ),
+        ("Motivo da parada", sugestao.motivo_parada),
+    ])
+    for r, (rotulo, valor) in enumerate(resumo_itens, start=3):
+        ws.cell(r, 1, rotulo)
+        ws.cell(r, 2, valor)
+        ws.cell(r, 1).font = Font(name="Arial", size=10, bold=True)
+        ws.cell(r, 1).fill = PatternFill("solid", fgColor=cinza)
+        for c in (1, 2):
+            ws.cell(r, c).border = borda
+            ws.cell(r, c).alignment = Alignment(vertical="center", wrap_text=True)
+            ws.cell(r, c).font = Font(name="Arial", size=10, bold=(c == 1))
+    for r in range(3, 3 + len(resumo_itens)):
+        if isinstance(ws.cell(r, 2).value, float):
+            ws.cell(r, 2).number_format = "0.00"
+
+    nota_row = len(resumo_itens) + 5
+    ws.merge_cells(start_row=nota_row, start_column=1, end_row=nota_row + 2, end_column=4)
+    ws.cell(nota_row, 1,
+        "ATENÇÃO: esta é uma sugestão heurística para apoiar testes. O Analítico não exclui casos automaticamente. "
+        "Revise os IDs, salve uma cópia do banco e recalcule a ponderação depois de aplicar qualquer exclusão."
+    )
+    ws.cell(nota_row, 1).fill = PatternFill("solid", fgColor=amarelo)
+    ws.cell(nota_row, 1).alignment = Alignment(wrap_text=True, vertical="center")
+    ws.cell(nota_row, 1).font = Font(name="Arial", size=10, bold=True)
+    ws.cell(nota_row, 1).border = borda
+
+    ws.column_dimensions["A"].width = 42
+    ws.column_dimensions["B"].width = 45
+    ws.column_dimensions["C"].width = 18
+    ws.column_dimensions["D"].width = 18
+    ws.freeze_panes = None
+
+    margens = wb.create_sheet("Margens")
+    margens.sheet_view.showGridLines = False
+    colunas = [
+        "variavel", "codigo", "categoria", "n_antes", "pct_antes",
+        "pct_universo", "diferenca_antes_pp", "n_depois", "pct_depois",
+        "diferenca_depois_pp", "excesso_n_aprox", "status",
+    ]
+    for c, nome in enumerate(colunas, start=1):
+        cel = margens.cell(1, c, nome)
+        cel.fill = PatternFill("solid", fgColor=azul)
+        cel.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+        cel.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cel.border = borda
+    for r, (_, linha) in enumerate(sugestao.resumo_margens.iterrows(), start=2):
+        for c, nome in enumerate(colunas, start=1):
+            valor = linha.get(nome)
+            cel = margens.cell(r, c, valor)
+            cel.font = Font(name="Arial", size=10)
+            cel.border = borda
+            cel.alignment = Alignment(vertical="center", wrap_text=True)
+            if nome in {"pct_antes", "pct_universo", "diferenca_antes_pp", "pct_depois", "diferenca_depois_pp", "excesso_n_aprox"}:
+                cel.number_format = "0.00"
+        if str(linha.get("status")) == "REVISAR":
+            margens.cell(r, 12).fill = PatternFill("solid", fgColor=vermelho)
+        else:
+            margens.cell(r, 12).fill = PatternFill("solid", fgColor=verde)
+    larguras = [16, 12, 34, 12, 14, 14, 18, 12, 14, 18, 16, 12]
+    for idx, largura in enumerate(larguras, start=1):
+        margens.column_dimensions[openpyxl.utils.get_column_letter(idx)].width = largura
+    margens.freeze_panes = "A2"
+
+    ids = wb.create_sheet("IDs sugeridos")
+    ids.sheet_view.showGridLines = False
+    ids.cell(1, 1, id_var)
+    ids.cell(1, 1).fill = PatternFill("solid", fgColor=azul)
+    ids.cell(1, 1).font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+    ids.cell(1, 1).alignment = Alignment(horizontal="center")
+    ids.cell(1, 1).border = borda
+    for r, valor in enumerate(sugestao.ids_excluir, start=2):
+        ids.cell(r, 1, valor)
+        ids.cell(r, 1).font = Font(name="Arial", size=10)
+        ids.cell(r, 1).border = borda
+    ids.column_dimensions["A"].width = 26
+    ids.freeze_panes = "A2"
+
+    sobras = wb.create_sheet("Sobras remanescentes")
+    sobras.sheet_view.showGridLines = False
+    if sugestao.sobras_remanescentes.empty:
+        sobras["A1"] = "Nenhuma categoria acima da tolerância bruta após a sugestão."
+    else:
+        sob_cols = [
+            "variavel", "codigo", "categoria", "n_depois", "pct_depois",
+            "pct_universo", "diferenca_depois_pp", "excesso_n_aprox",
+        ]
+        for c, nome in enumerate(sob_cols, start=1):
+            cel = sobras.cell(1, c, nome)
+            cel.fill = PatternFill("solid", fgColor=azul)
+            cel.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+            cel.border = borda
+        for r, (_, linha) in enumerate(sugestao.sobras_remanescentes.iterrows(), start=2):
+            for c, nome in enumerate(sob_cols, start=1):
+                cel = sobras.cell(r, c, linha.get(nome))
+                cel.font = Font(name="Arial", size=10)
+                cel.border = borda
+                cel.alignment = Alignment(vertical="center", wrap_text=True)
+                if nome in {"pct_depois", "pct_universo", "diferenca_depois_pp", "excesso_n_aprox"}:
+                    cel.number_format = "0.00"
+        for idx, largura in enumerate([16, 12, 34, 12, 14, 14, 18, 16], start=1):
+            sobras.column_dimensions[openpyxl.utils.get_column_letter(idx)].width = largura
+    sobras.freeze_panes = None
+
+    protecoes = wb.create_sheet("Proteções")
+    protecoes.sheet_view.showGridLines = False
+    restricoes_df = getattr(sugestao, "restricoes_ativas", pd.DataFrame())
+    if restricoes_df is None or restricoes_df.empty:
+        protecoes["A1"] = "Nenhuma proteção ficou ativa no ponto final da simulação."
+    else:
+        prot_cols = ["variavel", "codigo", "categoria", "n_final", "base_minima", "motivo"]
+        for c, nome in enumerate(prot_cols, start=1):
+            cel = protecoes.cell(1, c, nome)
+            cel.fill = PatternFill("solid", fgColor=azul)
+            cel.font = Font(name="Arial", size=10, bold=True, color="FFFFFF")
+            cel.border = borda
+            cel.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        for r, (_, linha) in enumerate(restricoes_df.iterrows(), start=2):
+            for c, nome in enumerate(prot_cols, start=1):
+                cel = protecoes.cell(r, c, linha.get(nome))
+                cel.font = Font(name="Arial", size=10)
+                cel.border = borda
+                cel.alignment = Alignment(vertical="center", wrap_text=True)
+        for idx, largura in enumerate([16, 12, 34, 12, 14, 48], start=1):
+            protecoes.column_dimensions[openpyxl.utils.get_column_letter(idx)].width = largura
+    protecoes.freeze_panes = None
+
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
+
+
+def _gerar_pacote_ponderacao_zip(
+    nome_registro: str,
+    excel_historico: bytes | None,
+    excel_calculo: bytes | None,
+    syntax: str,
+    excel_tecnico: bytes | None,
+    modelo_universo: bytes | None = None,
+    relatorio_exclusoes: bytes | None = None,
+    ids_exclusoes_csv: bytes | None = None,
+    syntax_exclusoes: str | None = None,
+) -> bytes:
+    """Agrupa os entregáveis em um ZIP que, ao extrair, cria uma pasta do projeto."""
+    pasta = f"Ponderacao_{nome_registro}/"
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        if excel_historico is not None:
+            zf.writestr(f"{pasta}Ponderacao_{nome_registro}.xlsx", excel_historico)
+        if excel_calculo is not None:
+            zf.writestr(
+                f"{pasta}Calculo_da_Ponderacao_{nome_registro}.xlsx",
+                excel_calculo,
+            )
+        zf.writestr(f"{pasta}Pesos_{nome_registro}.sps", syntax.encode("utf-8"))
+        if excel_tecnico is not None:
+            zf.writestr(
+                f"{pasta}Relatorio_tecnico_{nome_registro}.xlsx",
+                excel_tecnico,
+            )
+        if modelo_universo is not None:
+            zf.writestr(
+                f"{pasta}Modelo_Universo_{nome_registro}.xlsx",
+                modelo_universo,
+            )
+        if relatorio_exclusoes is not None:
+            zf.writestr(
+                f"{pasta}Sugestao_Exclusoes_{nome_registro}.xlsx",
+                relatorio_exclusoes,
+            )
+        if ids_exclusoes_csv is not None:
+            zf.writestr(
+                f"{pasta}IDs_Exclusao_{nome_registro}.csv",
+                ids_exclusoes_csv,
+            )
+        if syntax_exclusoes:
+            zf.writestr(
+                f"{pasta}Exclusoes_{nome_registro}.sps",
+                syntax_exclusoes.encode("utf-8"),
+            )
+    return buffer.getvalue()
 
 
 def _compatibilidade_perfil(base_editor: pd.DataFrame, perfil: dict, variavel: str) -> dict:
@@ -701,6 +1308,12 @@ def _gerar_arquivo_historico_excel(
     wb = openpyxl.load_workbook(modelo)
     ws = wb["Ponderação"] if "Ponderação" in wb.sheetnames else wb.active
 
+    # O modelo antigo possuía uma regra de formatação condicional na coluna K.
+    # Como os blocos são reposicionados dinamicamente, a regra podia atingir cabeçalhos
+    # textuais como "Pontos". O destaque passa a ser aplicado apenas por código,
+    # exclusivamente nas células numéricas de diferença.
+    ws.conditional_formatting = ConditionalFormattingList()
+
     # Captura os estilos do modelo antes de limpar os blocos de exemplo.
     refs = {
         "titulo_esq": copy(ws["B5"]),
@@ -867,7 +1480,10 @@ def _gerar_arquivo_historico_excel(
             ws.cell(r, 6, sem["percentual_valido"])
             ws.cell(r, 7, sem["percentual_acumulado"])
             ws.cell(r, 9, float(universo[codigo]))
-            ws.cell(r, 11, f"=Q{r}-I{r}")
+            # A diferença é gravada como valor numérico, não como fórmula. Isso evita
+            # que regras do Excel alcancem acidentalmente cabeçalhos textuais quando
+            # os blocos mudam de posição.
+            ws.cell(r, 11, round(float(bloco.iloc[pos]["diferenca_pp"]), 2))
             ws.cell(r, 14, categoria)
             ws.cell(r, 15, com["frequencia"])
             ws.cell(r, 16, com["percentual"])
@@ -1407,7 +2023,7 @@ def modulo_ponderacao():
     st.subheader("Universo reutilizável")
     st.caption(
         "O Universo fica salvo durante esta sessão mesmo quando você trocar a base .sav. "
-        "Também é possível importar o Universo da aba Registro de uma ponderação anterior."
+        "Também é possível importar um Modelo de Universo preenchido ou a aba Registro de uma ponderação anterior."
     )
     perfil = _perfil_sessao()
     total_alvos_perfil = _contar_alvos_perfil(perfil)
@@ -1418,12 +2034,12 @@ def modulo_ponderacao():
         )
 
     arquivo_universo = st.file_uploader(
-        "Importar Universo de um registro histórico (.xlsx)",
+        "Importar Universo preenchido (.xlsx)",
         type=["xlsx"],
         key="ponderacao_upload_universo_xlsx",
         help=(
-            "Use um arquivo Ponderacao_*.xlsx gerado anteriormente. O app lê somente "
-            "Variável SPSS + Código SPSS + % Universo da aba Registro."
+            "Use um Modelo_Universo_*.xlsx preenchido ou um Ponderacao_*.xlsx histórico. "
+            "O app lê somente Variável SPSS + Código SPSS + % Universo."
         ),
     )
     col_importar, col_esquecer = st.columns([3, 1])
@@ -1505,6 +2121,45 @@ def modulo_ponderacao():
     if len(variaveis) > 5:
         st.error("Selecione no máximo 5 variáveis por ponderação.")
         return
+
+    modelo_universo = None
+    erro_modelo_universo = None
+    try:
+        modelo_universo = _gerar_modelo_universo_excel(
+            dados=dados,
+            meta=meta,
+            value_labels=value_labels,
+            variaveis=list(variaveis),
+            arquivo_origem=getattr(uploaded, "name", "Base SPSS"),
+        )
+    except Exception as exc:
+        erro_modelo_universo = str(exc)
+
+    st.markdown("#### Modelo para preenchimento do Universo")
+    st.caption(
+        "O Analítico já montou um Excel com as variáveis selecionadas, códigos e labels "
+        "da base atual. Preencha somente a coluna % Universo, salve e depois importe o "
+        "mesmo arquivo acima quando precisar refazer a ponderação."
+    )
+    nome_modelo = _nome_arquivo_seguro(identificacao.strip() or identificacao_padrao)
+    if modelo_universo is not None:
+        st.download_button(
+            "Baixar modelo do Universo (.xlsx)",
+            data=modelo_universo,
+            file_name=f"Modelo_Universo_{nome_modelo}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="ponderacao_download_modelo_universo",
+            use_container_width=True,
+            help=(
+                "O modelo é criado a partir dos códigos e labels do SAV atual e pode ser "
+                "reutilizado em novas versões da amostra do mesmo projeto."
+            ),
+        )
+    else:
+        st.warning(
+            "Não foi possível gerar o modelo do Universo nesta execução. "
+            f"Detalhe técnico: {erro_modelo_universo}"
+        )
 
     perfil = _perfil_sessao()
     if _contar_alvos_perfil(perfil):
@@ -1883,15 +2538,514 @@ def modulo_ponderacao():
             "Vale revisar categorias com pouca base antes de usar o resultado."
         )
 
+    # ------------------------------------------------------------------
+    # Assistente de exclusões para testes de ponderação
+    # ------------------------------------------------------------------
+    assistente_relatorio = None
+    assistente_ids_csv = None
+    assistente_syntax = None
+
+    st.markdown("---")
+    st.subheader("Assistente de exclusões para ponderação")
+    st.caption(
+        "Ferramenta experimental de apoio a testes. O Analítico simula exclusões e recalcula a "
+        "ponderação sem alterar o banco original. As travas de cota são tratadas como restrições "
+        "rígidas: um caso só pode ser sugerido se todas as categorias dele continuarem acima da base mínima."
+    )
+
+    modo_objetivo_assistente = st.radio(
+        "Objetivo da simulação",
+        [
+            "Chegar exatamente ao N-alvo informado",
+            "Encontrar a melhor ponderação até o N mínimo",
+        ],
+        index=0,
+        horizontal=True,
+        key="ponderacao_assistente_objetivo",
+        help=(
+            "Use o primeiro modo quando o projeto precisa terminar exatamente com um N contratado, como 1.000. "
+            "Use o segundo quando o N informado é apenas um piso: o assistente avalia cenários entre a base atual "
+            "e esse mínimo e recomenda o N que produzir a menor diferença ponderada encontrada."
+        ),
+    )
+    forcar_n_alvo = modo_objetivo_assistente.startswith("Chegar exatamente")
+
+    if resultado.convergiu:
+        if forcar_n_alvo:
+            st.info(
+                "A ponderação atual já está dentro da tolerância. Como o objetivo selecionado é chegar a um N-alvo, "
+                "o assistente ainda pode procurar quais entrevistas retirar preservando o melhor equilíbrio possível."
+            )
+        else:
+            st.info(
+                "A ponderação atual já está dentro da tolerância configurada. Neste modo, o assistente ainda pode "
+                "avaliar a faixa até o N mínimo e verificar se existe um ponto com ponderação ainda melhor; se a "
+                "base atual continuar sendo o melhor cenário, ele recomendará zero exclusões."
+            )
+
+    id_padrao = _sugerir_variavel_id(dados)
+    colunas_id = list(dados.columns)
+    indice_id = colunas_id.index(id_padrao) if id_padrao in colunas_id else 0
+    col_id, col_n = st.columns(2)
+    with col_id:
+        id_var_assistente = st.selectbox(
+            "Variável de ID da entrevista",
+            options=colunas_id,
+            index=indice_id,
+            key="ponderacao_assistente_id_var",
+            help="O ID precisa ser único. Ele será usado na lista e na syntax SPSS de exclusão.",
+        )
+    with col_n:
+        rotulo_n = (
+            "Base-alvo exata após exclusões (N)"
+            if forcar_n_alvo
+            else "Base mínima permitida (N)"
+        )
+        n_minimo_assistente = int(
+            st.number_input(
+                rotulo_n,
+                min_value=1,
+                max_value=max(1, int(len(dados))),
+                value=int(len(dados)),
+                step=1,
+                key="ponderacao_assistente_n_minimo",
+                help=(
+                    "No modo de N-alvo exato, o assistente tenta terminar neste total. "
+                    "No modo de melhor ponderação, este valor é apenas o piso: por exemplo, com base 400 e mínimo "
+                    "300, o resultado recomendado pode ser 352 se esse for o melhor cenário encontrado."
+                ),
+            )
+        )
+
+    codigos_protegidos_assistente = OrderedDict()
+    with st.expander("Travas e proteções de exclusão", expanded=True):
+        st.caption(
+            "Uma entrevista é bloqueada para exclusão se pertencer a qualquer categoria protegida. "
+            "Ex.: com mínimo 30, uma categoria com base 34 pode perder no máximo 4 casos; ao chegar a 30, "
+            "nenhum outro respondente dessa categoria poderá ser sugerido."
+        )
+        proteger_minimo = st.checkbox(
+            "Proteger automaticamente a base mínima de todas as categorias usadas na ponderação",
+            value=True,
+            key="ponderacao_assistente_proteger_minimo",
+        )
+        base_minima_categoria = int(
+            st.number_input(
+                "Base mínima por categoria",
+                min_value=0,
+                max_value=max(0, int(len(dados))),
+                value=30,
+                step=1,
+                key="ponderacao_assistente_base_minima_categoria",
+                disabled=not proteger_minimo,
+                help=(
+                    "Regra geral de segurança. Com 30, nenhuma categoria das variáveis de ponderação "
+                    "poderá terminar com menos de 30 entrevistas por causa das sugestões do assistente."
+                ),
+            )
+        ) if proteger_minimo else 0
+
+        st.markdown("**Categorias que não podem ser excluídas de jeito algum**")
+        for variavel in variaveis:
+            editor_var = editores[variavel]
+            opcoes = editor_var["Código"].tolist()
+            labels_var_ui = {
+                linha["Código"]: str(linha["Categoria"])
+                for _, linha in editor_var.iterrows()
+            }
+            selecionados = st.multiselect(
+                _descricao_variavel(meta, variavel),
+                options=opcoes,
+                default=[],
+                format_func=lambda codigo, mapa=labels_var_ui: (
+                    f"{codigo} — {mapa.get(codigo, str(codigo))}"
+                ),
+                key=f"ponderacao_assistente_protegidos_{variavel}",
+                help=(
+                    "Qualquer entrevista pertencente a uma destas categorias será totalmente bloqueada "
+                    "para exclusão, mesmo que também pertença a outras categorias em excesso."
+                ),
+            )
+            codigos_protegidos_assistente[variavel] = set(selecionados)
+
+        linhas_capacidade = []
+        for variavel in variaveis:
+            for _, linha in editores[variavel].iterrows():
+                codigo = linha["Código"]
+                n_atual = int(linha["Frequência"])
+                manual = codigo in codigos_protegidos_assistente.get(variavel, set())
+                capacidade = 0 if manual else max(0, n_atual - base_minima_categoria)
+                linhas_capacidade.append(
+                    {
+                        "Variável": variavel,
+                        "Código": codigo,
+                        "Categoria": str(linha["Categoria"]),
+                        "N atual": n_atual,
+                        "Mínimo": base_minima_categoria if proteger_minimo else 0,
+                        "Máx. removível nesta cota": capacidade if proteger_minimo else n_atual,
+                        "Nunca excluir": "SIM" if manual else "",
+                    }
+                )
+        if linhas_capacidade:
+            st.dataframe(
+                pd.DataFrame(linhas_capacidade),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    max_exclusoes_assistente = max(0, int(len(dados)) - n_minimo_assistente)
+    texto_exclusoes = (
+        f"Exclusões necessárias para o N-alvo: {max_exclusoes_assistente}"
+        if forcar_n_alvo
+        else f"Máximo de exclusões que podem ser avaliadas: {max_exclusoes_assistente}"
+    )
+    st.caption(
+        f"Base atual: {len(dados)} | {texto_exclusoes} | "
+        f"Base mínima por categoria: {base_minima_categoria} | "
+        f"Tolerância: ±{float(tolerancia):.2f} p.p."
+    )
+
+    alvos_assistente = OrderedDict(
+        (variavel, _alvos_do_editor(editores[variavel], variavel))
+        for variavel in variaveis
+    )
+    protegidos_assinatura = tuple(
+        (variavel, tuple(sorted((repr(v) for v in valores))))
+        for variavel, valores in codigos_protegidos_assistente.items()
+    )
+    assinatura_assistente = (
+        assinatura_atual,
+        str(id_var_assistente),
+        int(n_minimo_assistente),
+        modo_objetivo_assistente,
+        int(base_minima_categoria),
+        protegidos_assinatura,
+    )
+    assistente_key = "ponderacao_assistente_exclusoes_resultado"
+    cache_assistente = st.session_state.get(assistente_key)
+
+    if st.button(
+        "Analisar possíveis exclusões",
+        key="ponderacao_assistente_analisar",
+        type="secondary",
+        use_container_width=True,
+        disabled=max_exclusoes_assistente <= 0,
+    ):
+        try:
+            with st.spinner(
+                "Analisando combinações de perfil, faixa de N e proteções de cota..."
+            ):
+                sugestao_limite = sugerir_exclusoes_ponderacao(
+                    dados=dados,
+                    id_var=id_var_assistente,
+                    alvos=alvos_assistente,
+                    n_minimo=n_minimo_assistente,
+                    tolerancia_pp=float(tolerancia),
+                    labels=labels_por_variavel,
+                    max_perfis_avaliados=30,
+                    parar_ao_atingir_tolerancia_bruta=False,
+                    base_minima_categoria=base_minima_categoria,
+                    codigos_protegidos=codigos_protegidos_assistente,
+                    # Nos dois modos geramos uma trajetória até o piso permitido.
+                    # No modo "melhor ponderação", depois escolhemos o melhor prefixo dessa trajetória.
+                    forcar_atingir_n_minimo=True,
+                )
+
+                if forcar_n_alvo:
+                    sugestao_final = sugestao_limite
+                    resultado_pos = resultado
+                    if sugestao_final.indices_excluir:
+                        dados_teste = dados.drop(index=sugestao_final.indices_excluir)
+                        resultado_pos = _calcular_ponderacao_para_teste_exclusao(
+                            dados_teste,
+                            alvos_assistente,
+                            labels_por_variavel,
+                            metodo_ui,
+                            float(tolerancia),
+                            max_iter,
+                        )
+                    resultado_no_limite = resultado_pos
+                else:
+                    melhor_k, resultado_pos = _refinar_prefixo_exclusoes_pelo_peso(
+                        dados=dados,
+                        sugestao=sugestao_limite,
+                        resultado_atual=resultado,
+                        alvos=alvos_assistente,
+                        labels_por_variavel=labels_por_variavel,
+                        metodo_ui=metodo_ui,
+                        tolerancia=float(tolerancia),
+                        max_iter=max_iter,
+                    )
+
+                    if melhor_k == len(sugestao_limite.ids_excluir):
+                        sugestao_final = sugestao_limite
+                    else:
+                        sugestao_final = sugerir_exclusoes_ponderacao(
+                            dados=dados,
+                            id_var=id_var_assistente,
+                            alvos=alvos_assistente,
+                            n_minimo=int(len(dados)) - int(melhor_k),
+                            tolerancia_pp=float(tolerancia),
+                            labels=labels_por_variavel,
+                            max_perfis_avaliados=30,
+                            parar_ao_atingir_tolerancia_bruta=False,
+                            base_minima_categoria=base_minima_categoria,
+                            codigos_protegidos=codigos_protegidos_assistente,
+                            forcar_atingir_n_minimo=True,
+                        )
+                        # O alvo temporário acima serve apenas para reconstruir exatamente o prefixo escolhido.
+                        # Para documentação, preservamos o piso original informado pelo usuário.
+                        sugestao_final.n_minimo = n_minimo_assistente
+                        sugestao_final.atingiu_n_alvo = sugestao_final.n_final <= n_minimo_assistente
+                        sugestao_final.faltam_exclusoes_para_alvo = max(
+                            0, sugestao_final.n_final - n_minimo_assistente
+                        )
+                        sugestao_final.limite_exclusoes = max_exclusoes_assistente
+                        sugestao_final.atingiu_limite_exclusoes = (
+                            len(sugestao_final.ids_excluir) >= max_exclusoes_assistente
+                            and not sugestao_final.atingiu_tolerancia_bruta
+                        )
+                    if melhor_k == 0 and max_exclusoes_assistente > 0:
+                        sugestao_final.motivo_parada = (
+                            "A base atual foi o melhor cenário ponderado entre os pontos avaliados; "
+                            "nenhuma exclusão testada reduziu a maior diferença ponderada."
+                        )
+                    elif melhor_k > 0:
+                        sugestao_final.motivo_parada = (
+                            f"Melhor ponto ponderado encontrado na faixa permitida: N={sugestao_final.n_final} "
+                            f"com {len(sugestao_final.ids_excluir)} exclusão(ões)."
+                        )
+
+                    resultado_no_limite = resultado
+                    if sugestao_limite.indices_excluir:
+                        try:
+                            dados_limite = dados.drop(index=sugestao_limite.indices_excluir)
+                            resultado_no_limite = _calcular_ponderacao_para_teste_exclusao(
+                                dados_limite,
+                                alvos_assistente,
+                                labels_por_variavel,
+                                metodo_ui,
+                                float(tolerancia),
+                                max_iter,
+                            )
+                        except Exception:
+                            resultado_no_limite = resultado
+
+            st.session_state[assistente_key] = {
+                "assinatura": assinatura_assistente,
+                "sugestao": sugestao_final,
+                "sugestao_limite": sugestao_limite,
+                "resultado_pos": resultado_pos,
+                "resultado_no_limite": resultado_no_limite,
+                "id_var": id_var_assistente,
+                "objetivo": modo_objetivo_assistente,
+            }
+            cache_assistente = st.session_state[assistente_key]
+        except Exception as exc:
+            st.session_state.pop(assistente_key, None)
+            cache_assistente = None
+            st.error(f"Não foi possível analisar exclusões: {exc}")
+
+    if (
+        isinstance(cache_assistente, dict)
+        and cache_assistente.get("assinatura") == assinatura_assistente
+    ):
+        sugestao = cache_assistente["sugestao"]
+        sugestao_limite = cache_assistente["sugestao_limite"]
+        resultado_pos = cache_assistente["resultado_pos"]
+        resultado_no_limite = cache_assistente.get("resultado_no_limite", resultado_pos)
+
+        a1, a2, a3, a4 = st.columns(4)
+        a1.metric("Exclusões sugeridas", len(sugestao.ids_excluir))
+        a2.metric("N estimado após exclusões", int(sugestao.n_final))
+        a3.metric("Diferença ponderada atual", f"{resultado.maior_diferenca_pp:.2f} p.p.")
+        a4.metric(
+            "Diferença estimada após reponderar",
+            f"{resultado_pos.maior_diferenca_pp:.2f} p.p.",
+        )
+
+        if forcar_n_alvo and not sugestao.atingiu_n_alvo:
+            st.error(
+                f"O N-alvo de {n_minimo_assistente} não pôde ser atingido sem violar as travas. "
+                f"A simulação parou em N={sugestao.n_final}; ainda seriam necessárias "
+                f"{sugestao.faltam_exclusoes_para_alvo} exclusão(ões)."
+            )
+        elif forcar_n_alvo and sugestao.atingiu_n_alvo:
+            if float(resultado_pos.maior_diferenca_pp) <= float(tolerancia):
+                st.success(
+                    f"O N-alvo de {n_minimo_assistente} foi atingido respeitando as proteções. "
+                    f"Após reponderar, a maior diferença estimada ficou em "
+                    f"{resultado_pos.maior_diferenca_pp:.2f} p.p."
+                )
+            elif resultado_pos.maior_diferenca_pp < resultado.maior_diferenca_pp:
+                st.warning(
+                    f"O N-alvo foi atingido e a ponderação melhorou de "
+                    f"{resultado.maior_diferenca_pp:.2f} para {resultado_pos.maior_diferenca_pp:.2f} p.p., "
+                    "mas ainda há margens fora da tolerância configurada."
+                )
+            else:
+                st.warning(
+                    f"O N-alvo foi atingido respeitando as travas, porém a maior diferença estimada após "
+                    f"reponderar ficou em {resultado_pos.maior_diferenca_pp:.2f} p.p. Revise as sobras antes de aplicar."
+                )
+        elif len(sugestao.ids_excluir) == 0:
+            if max_exclusoes_assistente > 0:
+                st.warning(
+                    "Dentro do limite e das proteções informadas, a heurística não encontrou exclusões "
+                    "que melhorassem a maior diferença ponderada."
+                )
+        elif resultado_pos.maior_diferenca_pp < resultado.maior_diferenca_pp:
+            st.success(
+                f"O melhor ponto ponderado encontrado na faixa de N={len(dados)} até N={n_minimo_assistente} "
+                f"foi N={sugestao.n_final}, com {len(sugestao.ids_excluir)} exclusão(ões). "
+                f"A maior diferença estimada caiu de {resultado.maior_diferenca_pp:.2f} para "
+                f"{resultado_pos.maior_diferenca_pp:.2f} p.p. Recalcule a ponderação na base real depois de aplicar "
+                "qualquer exclusão."
+            )
+        else:
+            st.warning(
+                "A aproximação das margens brutas não produziu melhora na maior diferença ponderada. "
+                "As exclusões devem ser tratadas apenas como indicação para revisão manual."
+            )
+
+        if not forcar_n_alvo:
+            if sugestao_limite.n_final > n_minimo_assistente:
+                st.info(
+                    f"As travas impediram que a trajetória fosse testada até N={n_minimo_assistente}. "
+                    f"O menor N alcançável sem violar as proteções foi {sugestao_limite.n_final}."
+                )
+            elif sugestao.n_final > n_minimo_assistente:
+                st.caption(
+                    f"O N={n_minimo_assistente} era apenas o piso da busca. O assistente recomendou parar antes, "
+                    f"em N={sugestao.n_final}, porque esse foi o melhor resultado ponderado encontrado."
+                )
+
+        if not sugestao.restricoes_ativas.empty:
+            st.markdown("**Proteções ativas no ponto em que a simulação terminou**")
+            st.dataframe(
+                sugestao.restricoes_ativas,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        tabela_sobras = (
+            sugestao_limite.sobras_remanescentes
+            if not sugestao_limite.sobras_remanescentes.empty
+            else sugestao.sobras_remanescentes
+        )
+        if not tabela_sobras.empty:
+            st.markdown("**Categorias que ainda aparecem mais sobrando para exclusão**")
+            sobras_exibicao = tabela_sobras.copy()
+            for coluna in [
+                "pct_depois",
+                "pct_universo",
+                "diferenca_depois_pp",
+                "excesso_n_aprox",
+            ]:
+                if coluna in sobras_exibicao.columns:
+                    sobras_exibicao[coluna] = pd.to_numeric(
+                        sobras_exibicao[coluna], errors="coerce"
+                    ).round(2)
+            colunas_sobras = [
+                c for c in [
+                    "variavel", "codigo", "categoria", "n_depois", "pct_depois",
+                    "pct_universo", "diferenca_depois_pp", "excesso_n_aprox"
+                ] if c in sobras_exibicao.columns
+            ]
+            st.dataframe(
+                sobras_exibicao[colunas_sobras],
+                use_container_width=True,
+                hide_index=True,
+            )
+
+        with st.expander("Ver diagnóstico das margens antes/depois das exclusões sugeridas"):
+            diag_sug = sugestao.resumo_margens.copy()
+            for coluna in [
+                "pct_antes", "pct_universo", "diferenca_antes_pp",
+                "pct_depois", "diferenca_depois_pp", "excesso_n_aprox",
+            ]:
+                if coluna in diag_sug.columns:
+                    diag_sug[coluna] = pd.to_numeric(diag_sug[coluna], errors="coerce").round(2)
+            st.dataframe(diag_sug, use_container_width=True, hide_index=True)
+
+        if sugestao.ids_excluir:
+            tipo_id_ui = st.radio(
+                f"Tipo da variável de ID '{id_var_assistente}' no SPSS",
+                ["Detectar automaticamente", "Numérica", "Texto"],
+                index=0,
+                horizontal=True,
+                key="ponderacao_assistente_tipo_id",
+            )
+            tratar_texto = {
+                "Detectar automaticamente": None,
+                "Numérica": False,
+                "Texto": True,
+            }[tipo_id_ui]
+            modo_ui = st.radio(
+                "Código SPSS para os IDs sugeridos",
+                [
+                    "Marcar IDs para conferir antes de excluir",
+                    "Excluir diretamente os IDs sugeridos",
+                ],
+                index=0,
+                key="ponderacao_assistente_modo_syntax",
+            )
+            modo_syntax = "marcar" if modo_ui.startswith("Marcar") else "excluir"
+            assistente_syntax = gerar_syntax_exclusao_ids(
+                id_var_assistente,
+                sugestao.ids_excluir,
+                tratar_como_texto=tratar_texto,
+                modo=modo_syntax,
+            )
+            assistente_ids_csv = pd.DataFrame(
+                {id_var_assistente: sugestao.ids_excluir}
+            ).to_csv(index=False).encode("utf-8-sig")
+            assistente_relatorio = _gerar_relatorio_sugestao_exclusoes_excel(
+                sugestao=sugestao,
+                id_var=id_var_assistente,
+                identificacao=identificacao_final,
+                metodo=resultado.metodo,
+                tolerancia_pp=float(tolerancia),
+                maior_ponderada_antes_pp=float(resultado.maior_diferenca_pp),
+                maior_ponderada_depois_pp=float(resultado_pos.maior_diferenca_pp),
+                objetivo_exclusao=modo_objetivo_assistente,
+            )
+
+            ex1, ex2, ex3 = st.columns(3)
+            ex1.download_button(
+                "Baixar IDs sugeridos (.csv)",
+                data=assistente_ids_csv,
+                file_name=f"IDs_Exclusao_{_nome_arquivo_seguro(identificacao_final)}.csv",
+                mime="text/csv",
+                key="ponderacao_assistente_download_ids",
+                use_container_width=True,
+            )
+            ex2.download_button(
+                "Baixar código SPSS (.sps)",
+                data=assistente_syntax.encode("utf-8"),
+                file_name=f"Exclusoes_{_nome_arquivo_seguro(identificacao_final)}.sps",
+                mime="text/plain",
+                key="ponderacao_assistente_download_syntax",
+                use_container_width=True,
+            )
+            ex3.download_button(
+                "Baixar relatório da sugestão (.xlsx)",
+                data=assistente_relatorio,
+                file_name=f"Sugestao_Exclusoes_{_nome_arquivo_seguro(identificacao_final)}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="ponderacao_assistente_download_relatorio",
+                use_container_width=True,
+            )
+            with st.expander("Ver código SPSS gerado"):
+                st.code(assistente_syntax, language="text")
+
     if resultado_reutilizado:
         syntax = cache_resultado["syntax"]
         excel_tecnico = cache_resultado["excel_tecnico"]
         excel_calculo = cache_resultado.get("excel_calculo")
         excel_historico = cache_resultado.get("excel_historico")
-        sav = cache_resultado.get("sav")
         erro_excel_calculo = cache_resultado.get("erro_excel_calculo")
         erro_excel_historico = cache_resultado.get("erro_excel_historico")
-        erro_sav = cache_resultado.get("erro_sav")
         nome_registro = cache_resultado["nome_registro"]
     else:
         syntax = gerar_syntax_spss(resultado.fatores)
@@ -1927,13 +3081,6 @@ def modulo_ponderacao():
             excel_historico = None
             erro_excel_historico = str(exc)
 
-        erro_sav = None
-        try:
-            sav = _gerar_sav_com_peso(dados, meta, resultado.pesos)
-        except Exception as exc:
-            sav = None
-            erro_sav = str(exc)
-
         nome_registro = _nome_arquivo_seguro(identificacao_final)
         st.session_state[cache_key] = {
             "assinatura": assinatura_atual,
@@ -1942,10 +3089,8 @@ def modulo_ponderacao():
             "excel_tecnico": excel_tecnico,
             "excel_calculo": excel_calculo,
             "excel_historico": excel_historico,
-            "sav": sav,
             "erro_excel_calculo": erro_excel_calculo,
             "erro_excel_historico": erro_excel_historico,
-            "erro_sav": erro_sav,
             "nome_registro": nome_registro,
         }
         cache_resultado = st.session_state[cache_key]
@@ -1962,7 +3107,39 @@ def modulo_ponderacao():
         )
 
     st.subheader("Arquivos finais")
-    col1, col2, col3, col4 = st.columns(4)
+    st.caption(
+        "O download da base .sav ponderada está temporariamente oculto. "
+        "A syntax SPSS continua disponível para aplicação do peso no banco."
+    )
+
+    pacote_zip = _gerar_pacote_ponderacao_zip(
+        nome_registro=nome_registro,
+        excel_historico=excel_historico,
+        excel_calculo=excel_calculo,
+        syntax=syntax,
+        excel_tecnico=excel_tecnico,
+        modelo_universo=modelo_universo,
+        relatorio_exclusoes=assistente_relatorio,
+        ids_exclusoes_csv=assistente_ids_csv,
+        syntax_exclusoes=assistente_syntax,
+    )
+    st.download_button(
+        "Baixar todos os arquivos (.zip)",
+        data=pacote_zip,
+        file_name=f"Ponderacao_{nome_registro}_arquivos.zip",
+        mime="application/zip",
+        key="ponderacao_download_todos_zip",
+        type="primary",
+        use_container_width=True,
+        help=(
+            "O ZIP cria uma pasta com o registro histórico, memória de cálculo, syntax, "
+            "relatório técnico e modelo reutilizável do Universo. Se o Assistente de exclusões "
+            "tiver uma sugestão ativa, inclui também o relatório, a lista de IDs e a syntax de "
+            "exclusão. A base .sav não é incluída."
+        ),
+    )
+
+    col1, col2, col3 = st.columns(3)
     if excel_historico is not None:
         col1.download_button(
             "Baixar registro histórico (.xlsx)",
@@ -1974,6 +3151,7 @@ def modulo_ponderacao():
                 "Arquivo preenchido no padrão do modelo histórico: amostra sem peso, universo, "
                 "amostra ponderada, diferenças e uma aba de registro técnico."
             ),
+            use_container_width=True,
         )
     else:
         col1.warning("Registro histórico indisponível nesta execução.")
@@ -1989,6 +3167,7 @@ def modulo_ponderacao():
                 "Memória de cálculo inspirada na planilha usada pela equipe: mostra amostra, "
                 "universo, razão, fatores, componentes peso1/peso2 e as linhas da syntax SPSS."
             ),
+            use_container_width=True,
         )
     else:
         col2.warning("Memória de cálculo indisponível nesta execução.")
@@ -1999,26 +3178,13 @@ def modulo_ponderacao():
         file_name=f"Pesos_{nome_registro}.sps",
         mime="text/plain",
         key="ponderacao_download_sps",
+        use_container_width=True,
     )
 
-    if sav is not None:
-        col4.download_button(
-            "Baixar base com variável peso (.sav)",
-            data=sav,
-            file_name=f"Base_com_peso_{nome_registro}.sav",
-            mime="application/octet-stream",
-            key="ponderacao_download_sav",
-        )
-        st.caption(
-            "O registro histórico preserva os nomes/rótulos e a ordem dos códigos que vierem do SPSS. "
-            "A base .sav recebe a variável 'peso' e a syntax termina com WEIGHT BY peso."
-        )
-    else:
-        col4.warning("Não foi possível gerar a cópia .sav nesta execução.")
-        detalhe = f" Detalhe técnico: {erro_sav}" if erro_sav else ""
-        st.caption(
-            "O registro, a syntax e o relatório técnico continuam disponíveis." + detalhe
-        )
+    st.caption(
+        "O registro histórico preserva os nomes/rótulos e a ordem dos códigos que vierem do SPSS. "
+        "Para aplicar o peso no banco, utilize a syntax gerada no SPSS."
+    )
 
     with st.expander("Relatório técnico detalhado"):
         st.caption(

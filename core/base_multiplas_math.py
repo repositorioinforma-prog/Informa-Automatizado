@@ -347,6 +347,49 @@ def calcular_linhas_base(
     return resultado
 
 
+def calcular_linhas_base_manual(blocos_multiplas, valor_base):
+    """
+    Variante de `calcular_linhas_base` pro modo manual: em vez de casar
+    contra um arquivo de bases (outra pergunta do mesmo projeto), aplica
+    o MESMO valor `valor_base` em toda coluna que o bloco realmente tem
+    dado — mesma lógica de detecção de coluna usada no modo com
+    arquivo, só que sem nenhum casamento por texto de cabeçalho. Pensado
+    pra quando não tem outro relatório do mesmo projeto disponível pra
+    puxar bases reais por segmento, só o N total da amostra mesmo (ou
+    qualquer valor único que a pessoa queira aplicar em tudo).
+
+    Blocos que já têm 'Base' continuam sendo pulados por completo,
+    igual ao modo com arquivo.
+
+    Retorna uma lista no mesmo formato de `calcular_linhas_base`
+    (`{"valores", "nao_encontradas", "ja_tinha_base", "eh_religiao"}`),
+    já compatível com `gerar_workbook_com_base` sem nenhuma mudança lá.
+    """
+    resultado = []
+    for b in blocos_multiplas:
+        if bloco_ja_tem_base(b):
+            resultado.append({
+                "valores": {}, "nao_encontradas": [], "ja_tinha_base": True, "eh_religiao": False
+            })
+            continue
+
+        valores = {}
+        n_cols = len(b["grupos"])
+        for col in range(1, n_cols):
+            tem_dado_na_coluna = any(
+                (row[col] if col < len(row) else None) is not None
+                for row in b["dados"]
+            )
+            if not tem_dado_na_coluna:
+                continue
+            valores[col] = valor_base
+
+        resultado.append({
+            "valores": valores, "nao_encontradas": [], "ja_tinha_base": False, "eh_religiao": False,
+        })
+    return resultado
+
+
 def gerar_workbook_com_base(caminho_multiplas, blocos_multiplas, linhas_base, aba=None):
     """
     Gera um NOVO workbook a partir do relatório de múltiplas original, com

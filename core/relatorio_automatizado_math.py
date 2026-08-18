@@ -864,7 +864,19 @@ def _remover_linha_extra_multipla(ws):
     imediatamente seguinte estiver totalmente em branco, remove essa
     linha (efeito de uma linha extra que sobra nesse tipo de tabela).
     Processa de baixo para cima.
+
+    A comparação ignora acento (usa `unicodedata` pra tirar diacríticos
+    antes de comparar) — sem isso, o texto real do relatório ('Múltipla',
+    com acento) nunca batia contra os literais 'MULTIPLA'/'ESTIMULADA E
+    MULTIPLA' (sem acento), e a linha extra nunca era removida na
+    prática. Bug antigo, corrigido aqui — não é específico do Total
+    Automático, também afeta o código 05 do Relatório Automatizado.
     """
+    import unicodedata
+
+    def _sem_acento(texto):
+        return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode("ascii")
+
     max_col = ws.max_column
     removidas = 0
     r = ws.max_row
@@ -877,7 +889,7 @@ def _remover_linha_extra_multipla(ws):
                 break
 
         if faixa is not None and faixa.min_row == r:
-            texto = _normalizar_texto_base(ws.cell(row=faixa.min_row, column=1).value)
+            texto = _sem_acento(_normalizar_texto_base(ws.cell(row=faixa.min_row, column=1).value))
             eh_multipla = "ESTIMULADA E MULTIPLA" in texto or "MULTIPLA" in texto
             if eh_multipla:
                 linha_abaixo = faixa.max_row + 1
@@ -885,7 +897,7 @@ def _remover_linha_extra_multipla(ws):
                     ws.delete_rows(linha_abaixo, 1)
                     removidas += 1
         elif faixa is None:
-            texto = _normalizar_texto_base(cel.value)
+            texto = _sem_acento(_normalizar_texto_base(cel.value))
             eh_multipla = "ESTIMULADA E MULTIPLA" in texto or "MULTIPLA" in texto
             if eh_multipla:
                 linha_abaixo = r + 1
@@ -897,20 +909,28 @@ def _remover_linha_extra_multipla(ws):
     return removidas
 
 
-def aplicar_codigo_05(ws, limite=25):
+def aplicar_layout_basico_planilha(ws):
     """
-    Porta o VBA 'ConfigurarUmaPlanilha' por completo:
+    Parte "layout" do VBA 'ConfigurarUmaPlanilha' — tudo, EXCETO a
+    exclusão de colunas de Base reduzida (essa fica isolada em
+    `aplicar_codigo_05`, que chama esta função por baixo). Extraída à
+    parte pra ser reaproveitada por outros fluxos que precisam do mesmo
+    layout sem a exclusão por limite (ex.: Total Automático).
+
     - fonte DIN 10 e alinhamento centralizado em toda a planilha;
     - coluna A alinhada à esquerda (horizontal) e centralizada (vertical);
     - margens, orientação PAISAGEM e papel A4;
-    - largura da coluna A = 20.67, demais colunas = 8.9;
+    - largura da coluna A = 21, coluna B = 8, demais colunas = 8.67
+      (+ compensação empírica AJUSTE_LARGURA_COLUNA_DIN);
+    - escala de impressão 100% (não "ajustar à largura");
     - toda célula mesclada na coluna A contendo 'Pergunta' ou '*' alinhada
-      à esquerda;
-    - remove a linha extra que sobra logo abaixo de títulos de pergunta
-      do tipo Múltipla;
-    - por fim, exclui as colunas de Base reduzida abaixo do limite
-      escolhido (mesma lógica de sempre, mas agora dentro do fluxo
-      completo do código original).
+      à esquerda.
+
+    (Não remove mais a linha extra abaixo de títulos 'Múltipla' — tinha
+    uma tentativa de correção aqui, mas não funcionou como esperado num
+    arquivo real e foi desativada a pedido do Lucas. A função
+    `_remover_linha_extra_multipla` continua no arquivo, só não é mais
+    chamada; ver comentário logo abaixo.)
     """
     from openpyxl.worksheet.page import PageMargins
 
@@ -973,7 +993,21 @@ def aplicar_codigo_05(ws, limite=25):
                     justifyLastLine=a.justifyLastLine, readingOrder=a.readingOrder,
                 )
 
-    _remover_linha_extra_multipla(ws)
+    # Removida a chamada de `_remover_linha_extra_multipla(ws)` — a
+    # correção do bug de acentuação (comparava com 'MULTIPLA' sem
+    # acento contra texto real 'MÚLTIPLA' com acento) não resolveu o
+    # problema na prática num arquivo real; desativada a pedido do
+    # Lucas até investigar com mais calma. A função continua definida
+    # acima, só não é mais chamada daqui.
+
+
+def aplicar_codigo_05(ws, limite=25):
+    """
+    Porta o VBA 'ConfigurarUmaPlanilha' por completo: aplica o layout
+    básico (ver `aplicar_layout_basico_planilha`) e, por fim, exclui as
+    colunas de Base reduzida abaixo do limite escolhido.
+    """
+    aplicar_layout_basico_planilha(ws)
     excluidas = _excluir_colunas_base_reduzida(ws, limite)
 
     return excluidas

@@ -9,8 +9,9 @@ Insere duas "capas" de separação no relatório:
       cabeçalho conter "Total" + uma palavra de segmento conhecida).
     - "RESULTADOS PELO TOTAL", logo antes da primeira tabela do
       relatório (a primeira ocorrência de "Total" em qualquer célula),
-      precedida por 6 páginas em branco (espaço reservado pra
-      sumário/capa geral do documento impresso).
+      precedida por um espaço fixo de 140 linhas em branco (com quebra
+      de página em posições fixas, não calculadas dinamicamente — ver
+      `QUEBRAS_RELATIVAS_ANTES_TOTAL`).
 
 Cada capa é um bloco de 7 linhas (título grande centralizado na 4ª) +
 2 linhas em branco depois, com uma célula-marcador invisível (texto
@@ -25,17 +26,34 @@ from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.pagebreak import Break
 
-from core.planilha_utils import inserir_linhas_seguro, remover_linhas_seguro
+from core.planilha_utils import inserir_linhas_seguro, remover_linhas_seguro, linha_vazia_ate_coluna
 from core.relatorio_automatizado_math import _ultima_linha_com_conteudo
 
 COL_INICIO = 1  # A
 COL_FIM = 13  # M
-PAGINAS_BRANCAS_ANTES_TOTAL = 6
 LINHAS_BLOCO_TITULO = 7
 LINHA_DO_TITULO_NO_BLOCO = 4
 LINHAS_EM_BRANCO_APOS_CAPA = 2
 MARCADOR_TOTAL = "__CAPA_TOTAL__"
 MARCADOR_SEGMENTOS = "__CAPA_SEGMENTOS__"
+
+# Espaço ANTES do bloco de título "RESULTADOS PELO TOTAL": 140 linhas em
+# branco, com quebra de página nas posições relativas abaixo (medidas
+# por Lucas num arquivo real — não são calculadas a partir de
+# `linhas_por_pagina`, são fixas). O bloco do título em si já tem 3
+# linhas de espaço antes do título por conta própria (ver
+# `_inserir_bloco_resultado`/`LINHA_DO_TITULO_NO_BLOCO`); as 140 linhas
+# daqui NÃO somam nenhuma linha extra a mais além dessas 140 — não tem
+# mais nenhum espaço adicional entre elas e o bloco do título.
+# A capa dos Segmentos não usa nada disso (continua sem espaço antes).
+LINHAS_BRANCAS_ANTES_TOTAL = 140
+ESPACO_TOTAL_ANTES_TITULO = LINHAS_BRANCAS_ANTES_TOTAL  # 140
+# Posições relativas (1 = primeira das 140 linhas em branco) onde deve
+# haver quebra de página. Página 1 (antes da 1ª quebra) fica com 14
+# linhas de verdade no arquivo (offset relativo 12, considerando que o
+# início do bloco costuma ficar 2 linhas abaixo do topo do arquivo);
+# páginas 2 a 6 têm exatamente 32 linhas cada uma daí em diante.
+QUEBRAS_RELATIVAS_ANTES_TOTAL = [12, 44, 76, 108, 140]
 
 PALAVRAS_SEGMENTO = [
     "SEXO", "IDADE", "FAIXA ETARIA", "FAIXA ETÁRIA", "RENDA", "ESCOLARIDADE",
@@ -170,33 +188,80 @@ def _limpar_quebras_no_intervalo(ws, linha_inicial, linha_final):
     ws.row_breaks.brk = [b for b in ws.row_breaks.brk if not (ini <= b.id <= linha_final)]
 
 
-def _aplicar_quebras_bloco_total(ws, linha_inicio_titulo, linhas_por_pagina):
-    inicio_paginas_brancas = linha_inicio_titulo - (PAGINAS_BRANCAS_ANTES_TOTAL * linhas_por_pagina)
+def _aplicar_quebras_bloco_total(ws, linha_inicio_titulo):
+    """
+    As quebras ANTES do título (dentro das 140 linhas em branco) já
+    foram inseridas em posições fixas por `_inserir_espaco_fixo_antes_total`,
+    na hora da criação do bloco — não precisam ser recalculadas aqui, e
+    a limpeza abaixo NÃO pode alcançar essa área (a última das 140
+    quebras fixas fica bem coladinha no início do bloco do título, uma
+    margem de limpeza "-2" a partir daqui a apagaria sem querer). Só
+    garante a quebra logo DEPOIS do bloco do título (separando a capa
+    do que vem a seguir no relatório).
+    """
     linha_quebra_depois_titulo = linha_inicio_titulo + LINHAS_BLOCO_TITULO
-
-    _limpar_quebras_no_intervalo(ws, inicio_paginas_brancas - 2, linha_quebra_depois_titulo + 2)
-
-    for i in range(0, PAGINAS_BRANCAS_ANTES_TOTAL + 1):
-        linha_quebra = inicio_paginas_brancas + i * linhas_por_pagina
-        if linha_quebra > 1:
-            _adicionar_quebra(ws, linha_quebra - 1)
-
+    _limpar_quebras_no_intervalo(ws, linha_quebra_depois_titulo - 2, linha_quebra_depois_titulo + 2)
     _adicionar_quebra(ws, linha_quebra_depois_titulo - 1)
+
+
+def _inicio_vao_em_branco_acima(ws, linha_ref, max_col=None):
+    """
+    Sobe a partir de `linha_ref - 1` enquanto a linha estiver totalmente
+    vazia — acha o início do vão em branco imediatamente acima de
+    `linha_ref`. Usado pra limpar TODAS as quebras de página que
+    sobraram dentro desse vão (normalmente deixadas pelo código 07, de
+    quando a tabela anterior ainda não tinha sido empurrada pra cá)
+    antes de inserir a quebra nova — uma margem fixa de só 2 linhas
+    podia deixar uma quebra antiga "presa" logo fora da margem,
+    resultando numa página nova quase vazia (só 1-2 linhas em branco)
+    entre a tabela anterior e a capa.
+    """
+    if max_col is None:
+        max_col = ws.max_column
+    r = linha_ref - 1
+    while r >= 1 and linha_vazia_ate_coluna(ws, r, max_col):
+        r -= 1
+    return r + 1
+
+
+def _reduzir_vao_em_branco_acima(ws, linha_ref, linhas_desejadas=2, max_col=None):
+    """
+    Reduz o vão de linhas em branco imediatamente acima de `linha_ref`
+    pra exatamente `linhas_desejadas` linhas. O código 07 normaliza o
+    vão pós-Pergunta de toda tabela pra 4 linhas em branco — na
+    transição pra "RESULTADOS PELOS SEGMENTOS" isso deixava 4 linhas
+    entre a última tabela do Total e a capa, mas só deveriam sobrar 2.
+
+    Se o vão já tiver `linhas_desejadas` ou menos, não faz nada (seguro
+    pra rodar de novo sem encolher além da conta numa segunda execução).
+
+    Retorna a nova posição de `linha_ref` depois do ajuste (remover
+    linhas de dentro do vão empurra tudo abaixo, incluindo `linha_ref`,
+    pra cima).
+    """
+    inicio_vao = _inicio_vao_em_branco_acima(ws, linha_ref, max_col)
+    tamanho_vao = linha_ref - inicio_vao
+    if tamanho_vao <= linhas_desejadas:
+        return linha_ref
+    a_remover = tamanho_vao - linhas_desejadas
+    remover_linhas_seguro(ws, inicio_vao, a_remover)
+    return linha_ref - a_remover
 
 
 def _aplicar_quebras_bloco_normal(ws, linha_inicio_titulo):
     linha_quebra_depois_titulo = linha_inicio_titulo + LINHAS_BLOCO_TITULO
-    _limpar_quebras_no_intervalo(ws, linha_inicio_titulo - 2, linha_quebra_depois_titulo + 2)
+    inicio_vao = _inicio_vao_em_branco_acima(ws, linha_inicio_titulo)
+    _limpar_quebras_no_intervalo(ws, inicio_vao, linha_quebra_depois_titulo + 2)
     if linha_inicio_titulo > 1:
         _adicionar_quebra(ws, linha_inicio_titulo - 1)
     _adicionar_quebra(ws, linha_quebra_depois_titulo - 1)
 
 
-def _aplicar_quebras_resultados(ws, linhas_por_pagina):
+def _aplicar_quebras_resultados(ws):
     max_row = _ultima_linha_com_conteudo(ws)
     linha_total = _encontrar_linha_marcador(ws, MARCADOR_TOTAL, max_row)
     if linha_total:
-        _aplicar_quebras_bloco_total(ws, linha_total, linhas_por_pagina)
+        _aplicar_quebras_bloco_total(ws, linha_total)
 
     linha_segmentos = _encontrar_linha_marcador(ws, MARCADOR_SEGMENTOS, max_row)
     if linha_segmentos:
@@ -206,6 +271,32 @@ def _aplicar_quebras_resultados(ws, linhas_por_pagina):
 # ---------------------------------------------------------------------------
 # Inserção / limpeza das capas
 # ---------------------------------------------------------------------------
+def _inserir_espaco_fixo_antes_total(ws, linha_base):
+    """
+    Insere o espaço fixo ANTES do bloco de título "RESULTADOS PELO
+    TOTAL": 140 linhas em branco + mais 2 linhas em branco logo acima
+    de onde o bloco do título vai começar.
+
+    As 140 linhas têm quebra de página nas posições relativas definidas
+    em `QUEBRAS_RELATIVAS_ANTES_TOTAL` (12, 33, 68, 104, 140) — valores
+    fixos, medidos por Lucas contra um arquivo real, não calculados a
+    partir de `linhas_por_pagina`.
+
+    Retorna a linha onde o bloco do título (`_inserir_bloco_resultado`,
+    7 linhas) deve começar a partir daqui.
+    """
+    inserir_linhas_seguro(ws, linha_base, ESPACO_TOTAL_ANTES_TITULO)
+
+    altura_padrao = ws.sheet_format.defaultRowHeight or 15
+    for i in range(linha_base, linha_base + ESPACO_TOTAL_ANTES_TITULO):
+        ws.row_dimensions[i].height = altura_padrao
+
+    for offset in QUEBRAS_RELATIVAS_ANTES_TOTAL:
+        _adicionar_quebra(ws, linha_base + offset - 1)
+
+    return linha_base + ESPACO_TOTAL_ANTES_TITULO
+
+
 def _inserir_bloco_resultado(ws, linha_base, titulo, marcador, paginas_brancas_antes, linhas_por_pagina):
     linhas_paginas_brancas = paginas_brancas_antes * linhas_por_pagina
     total_linhas_inserir = linhas_paginas_brancas + LINHAS_BLOCO_TITULO + LINHAS_EM_BRANCO_APOS_CAPA
@@ -248,7 +339,7 @@ def _inserir_bloco_resultado(ws, linha_base, titulo, marcador, paginas_brancas_a
     return linha_inicio_titulo
 
 
-def _limpar_capas_antigas(ws, linhas_por_pagina):
+def _limpar_capas_antigas(ws):
     """Remove capas inseridas numa execução anterior deste código (busca
     pelos marcadores invisíveis) — permite rodar de novo sem duplicar."""
     while True:
@@ -257,7 +348,7 @@ def _limpar_capas_antigas(ws, linhas_por_pagina):
         for i in range(max_row, 0, -1):
             valor = str(ws.cell(row=i, column=1).value or "").strip()
             if valor == MARCADOR_TOTAL:
-                linha_inicio = max(1, i - PAGINAS_BRANCAS_ANTES_TOTAL * linhas_por_pagina)
+                linha_inicio = max(1, i - ESPACO_TOTAL_ANTES_TITULO)
                 linha_fim = i + LINHAS_BLOCO_TITULO + LINHAS_EM_BRANCO_APOS_CAPA - 1
                 remover_linhas_seguro(ws, linha_inicio, linha_fim - linha_inicio + 1)
                 encontrou = True
@@ -295,7 +386,7 @@ def aplicar_codigo_15(ws):
     if linhas_por_pagina <= 0:
         linhas_por_pagina = 45
 
-    _limpar_capas_antigas(ws, linhas_por_pagina)
+    _limpar_capas_antigas(ws)
     _configurar_pagina_am(ws)
 
     max_row = _ultima_linha_com_conteudo(ws)
@@ -309,6 +400,10 @@ def aplicar_codigo_15(ws):
     linha_capa_segmentos = None
     if linha_cab_seg:
         linha_inicio_seg = _encontrar_inicio_bloco(ws, linha_cab_seg)
+        # o código 07 normaliza o vão pós-Pergunta de toda tabela pra 4
+        # linhas em branco — aqui, na transição pro bloco de Segmentos,
+        # só devem sobrar 2 antes da capa
+        linha_inicio_seg = _reduzir_vao_em_branco_acima(ws, linha_inicio_seg, linhas_desejadas=2)
         # insere primeiro o bloco de baixo (Segmentos) — inserir linhas
         # ali não afeta a posição do bloco do Total, que fica acima
         linha_capa_segmentos = _inserir_bloco_resultado(
@@ -316,14 +411,33 @@ def aplicar_codigo_15(ws):
             0, linhas_por_pagina,
         )
 
+    # Espaço fixo (140 linhas em branco com quebras + 2 linhas em branco)
+    # ANTES do bloco do título "RESULTADOS PELO TOTAL" — ver
+    # `_inserir_espaco_fixo_antes_total`. Substituiu o antigo cálculo
+    # dinâmico de "6 páginas em branco" baseado em linhas_por_pagina.
+    linha_apos_espaco = _inserir_espaco_fixo_antes_total(ws, linha_inicio_total)
     linha_capa_total = _inserir_bloco_resultado(
-        ws, linha_inicio_total, "RESULTADOS PELO TOTAL", MARCADOR_TOTAL,
-        PAGINAS_BRANCAS_ANTES_TOTAL, linhas_por_pagina,
+        ws, linha_apos_espaco, "RESULTADOS PELO TOTAL", MARCADOR_TOTAL,
+        0, linhas_por_pagina,
     )
 
     _configurar_pagina_am(ws)
-    _aplicar_quebras_resultados(ws, linhas_por_pagina)
+    _aplicar_quebras_resultados(ws)
     _configurar_pagina_am(ws)
+
+    # As quebras foram inseridas em pontos diferentes do processo (as 5
+    # fixas antes do Total, a de depois do bloco, as dos Segmentos, e
+    # quaisquer outras já existentes no arquivo antes do código 15
+    # rodar — normalmente do código 07). `.append()` do openpyxl sempre
+    # põe no fim da lista Python, independente do valor — então a lista
+    # final pode ficar fora de ordem crescente mesmo com cada valor
+    # individualmente correto. O Excel descarta a lista INTEIRA de
+    # quebras manuais nesse caso (gotcha já mapeado no projeto), o que
+    # se manifesta como "só aparecem linhas pontilhadas" (paginação
+    # automática) em vez das quebras manuais de verdade. Reordena por
+    # id como último passo, depois de todas as quebras já terem sido
+    # inseridas.
+    ws.row_breaks.brk = sorted(ws.row_breaks.brk, key=lambda b: b.id)
 
     # a posição da capa de Segmentos pode ter sido deslocada pela
     # inserção da capa do Total (que fica acima dela no arquivo) —
@@ -377,14 +491,16 @@ def validar_capas(ws, resultado):
         if not tem_mesclagem:
             erros.append(f"Mesclagem A:M não encontrada na linha do título ({linha_titulo_total}).")
 
-        # confere as 6 páginas em branco: precisa haver pelo menos 6
-        # quebras manuais entre o início do bloco de páginas brancas e a capa
+        # confere o espaço fixo de 140 linhas em branco: precisa haver
+        # pelo menos as 5 quebras manuais fixas (ver
+        # QUEBRAS_RELATIVAS_ANTES_TOTAL) entre o início desse espaço e a
+        # capa
         ids_quebras = sorted(b.id for b in ws.row_breaks.brk if b.id is not None)
         quebras_antes_do_total = [i for i in ids_quebras if i < linha_total]
-        if len(quebras_antes_do_total) < PAGINAS_BRANCAS_ANTES_TOTAL:
+        if len(quebras_antes_do_total) < len(QUEBRAS_RELATIVAS_ANTES_TOTAL):
             erros.append(
-                f"Esperava pelo menos {PAGINAS_BRANCAS_ANTES_TOTAL} quebras de página "
-                f"antes da capa do Total, achei {len(quebras_antes_do_total)}."
+                f"Esperava pelo menos {len(QUEBRAS_RELATIVAS_ANTES_TOTAL)} quebras de "
+                f"página antes da capa do Total, achei {len(quebras_antes_do_total)}."
             )
         linha_depois_bloco_total = linha_total + LINHAS_BLOCO_TITULO
         if (linha_depois_bloco_total - 1) not in ids_quebras:

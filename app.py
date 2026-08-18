@@ -11,11 +11,13 @@ from analises.base_reduzida import processador_base_reduzida
 from analises.base_multiplas import modulo_base_multiplas
 from analises.legendas import modulo_legendas
 from analises.relatorio_automatizado import modulo_relatorio_automatizado
+from analises.total_automatico import modulo_total_automatico
 from analises.codigos_individuais import modulo_codigos_individuais
 from analises.exclusoes import modulo_exclusoes
 from analises.gerador_amostra import modulo_gerador_amostra
 from analises.ponderacao import modulo_ponderacao
 from analises.divisor_tabelas import modulo_divisor_tabelas
+from analises.padronizacao_titulos import modulo_padronizacao_titulos
 from analises.correspondencia_multipla import analise_correspondencia_multipla
 from analises.correspondencia_simples import analise_correspondencia
 from core.dados import carregar_dados
@@ -271,10 +273,12 @@ def main():
             "Base nas Múltiplas",
             "Legendas",
             "Relatório Automatizado",
+            "Total Automático",
             "Códigos Individuais",
             "Gerador de Amostra",
             "Ponderação",
             "Divisor de Tabelas de Regioes",
+            "Padronização de Títulos",
         ),
     )
 
@@ -299,6 +303,10 @@ def main():
         modulo_relatorio_automatizado()
         return
 
+    if analise == "Total Automático":
+        modulo_total_automatico()
+        return
+
     if analise == "Códigos Individuais":
         modulo_codigos_individuais()
         return
@@ -313,6 +321,10 @@ def main():
 
     if analise == "Divisor de Tabelas de Regioes":
         modulo_divisor_tabelas()
+        return
+
+    if analise == "Padronização de Títulos":
+        modulo_padronizacao_titulos()
         return
 
     uploaded_file = st.file_uploader("Carregar Arquivo", type=["csv", "xlsx", "sav"])

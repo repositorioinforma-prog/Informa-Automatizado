@@ -698,20 +698,38 @@ def _com_horizontal_vertical(alinhamento_atual, horizontal, vertical):
 # =========================================================
 # Código 09 — Ajusta a altura das labels (autofit aproximado)
 # =========================================================
-_GATILHOS_ALTURA_FIXA_30 = ("masculino", "feminino", "ensino")
+# Cada grupo: (gatilhos de texto, altura fixa, coluna mínima onde vale
+# — None = qualquer coluna). Comparação por "começa com",
+# case-insensitive. Escolaridade ('Ensino...') foi pra 45 a pedido do
+# Lucas (era 30, junto com Sexo, até essa mudança); Sexo
+# ('Masculino'/'Feminino') continua em 30, em qualquer coluna. Os
+# segmentos de avaliação ('Aprovação'/'Regular'/'Reprovação') também
+# ficam em 30, mas SÓ quando aparecem da coluna C em diante — se
+# aparecerem na coluna A (rótulo da linha, não valor de segmento), não
+# deve ser alterado.
+_GATILHOS_ALTURA_FIXA = (
+    (("masculino", "feminino"), 30, None),
+    (("ensino",), 45, None),
+    (("aprovação", "regular", "reprovação"), 30, 3),
+)
 
 
-def _linha_tem_gatilho_altura_fixa(ws, r):
-    """Linhas de subcategoria de Sexo ('Masculino'/'Feminino') e
-    Escolaridade ('Ensino...') têm altura fixa de 30, pré-definida —
-    não passam pela estimativa normal do código 09."""
-    for c in range(1, ws.max_column + 1):
-        valor = ws.cell(row=r, column=c).value
-        if isinstance(valor, str):
-            texto = valor.strip().lower()
-            if any(texto.startswith(gatilho) for gatilho in _GATILHOS_ALTURA_FIXA_30):
-                return True
-    return False
+def _altura_fixa_para_linha(ws, r):
+    """
+    Se a linha tiver algum gatilho de altura fixa (ver
+    `_GATILHOS_ALTURA_FIXA`), retorna a altura correspondente — essas
+    linhas não passam pela estimativa normal do código 09. Senão,
+    retorna None.
+    """
+    for gatilhos, altura, coluna_minima in _GATILHOS_ALTURA_FIXA:
+        col_inicio = coluna_minima or 1
+        for c in range(col_inicio, ws.max_column + 1):
+            valor = ws.cell(row=r, column=c).value
+            if isinstance(valor, str):
+                texto = valor.strip().lower()
+                if any(texto.startswith(gatilho) for gatilho in gatilhos):
+                    return altura
+    return None
 
 
 def aplicar_codigo_09(ws):
@@ -724,15 +742,17 @@ def aplicar_codigo_09(ws):
     também aplica sempre a estimativa, não só quando ela é maior que a
     altura atual.
 
-    Exceção: linhas de subcategoria de Sexo ('Masculino'/'Feminino') e
-    Escolaridade ('Ensino...') sempre ficam com altura fixa 30, em vez
-    da estimativa — um valor pré-definido, não calculado.
+    Exceção: linhas com algum gatilho de `_GATILHOS_ALTURA_FIXA`
+    (subcategoria de Sexo, Escolaridade, ou segmento de avaliação)
+    sempre ficam com a altura fixa correspondente, em vez da
+    estimativa — um valor pré-definido, não calculado.
     """
     alterados = 0
     for r in range(1, ws.max_row + 1):
-        if _linha_tem_gatilho_altura_fixa(ws, r):
-            if ws.row_dimensions[r].height != 30.0:
-                ws.row_dimensions[r].height = 30.0
+        altura_fixa = _altura_fixa_para_linha(ws, r)
+        if altura_fixa is not None:
+            if ws.row_dimensions[r].height != float(altura_fixa):
+                ws.row_dimensions[r].height = float(altura_fixa)
                 alterados += 1
             continue
 

@@ -19,6 +19,8 @@ Não depende do `dados` carregado no início do app: tem upload próprio.
 import io
 import os
 import base64
+import tempfile
+import uuid
 
 import openpyxl
 import streamlit as st
@@ -36,6 +38,10 @@ from core.pdf_preview import gerar_pdf_preview, wkhtmltopdf_disponivel
 from core.cabecalho_imagem import inserir_imagem_cabecalho
 from core.cabecalho_correcao_math import parsear_blocos_cabecalho_referencia, aplicar_codigo_13
 from core.capas_resultados_math import aplicar_codigo_15
+from core.total_automatico_math import (
+    encontrar_perguntas_com_base_reduzida,
+    detectar_bases_divergentes,
+)
 from core.relatorio_automatizado_math import (
     aplicar_codigo_01,
     aplicar_codigo_02,
@@ -569,6 +575,42 @@ def modulo_relatorio_automatizado():
     # ---------------------------------------------------------------
     if etapa == "final":
         st.success("Fluxo concluído!")
+
+        wb_final = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
+        ws_final = wb_final.active
+
+        perguntas_base_reduzida = encontrar_perguntas_com_base_reduzida(ws_final)
+        if perguntas_base_reduzida:
+            lista_perguntas = "\n".join(f"- {t}" for t in perguntas_base_reduzida)
+            st.warning(
+                "Este relatório tem pergunta(s) com **Base reduzida** (feitas só "
+                "pra uma parte da amostra). Não esqueça de colocar o \"Para "
+                "quem...\" explicando o filtro em cada uma:\n\n" + lista_perguntas
+            )
+
+        divergencia = detectar_bases_divergentes(ws_final)
+        if divergencia["divergentes"]:
+            lista_divergentes = "\n".join(
+                f"- {d['titulo']}: base = {d['valor']}" for d in divergencia["divergentes"]
+            )
+            st.warning(
+                f"A maioria das tabelas tem Base = {divergencia['valor_maioria']}, "
+                f"mas encontrei tabela(s) com um valor diferente (e sem estar "
+                f"marcada(s) como 'Base reduzida'). Vale conferir se é "
+                f"intencional:\n\n" + lista_divergentes
+            )
+
+        st.warning(
+            "Checklist antes de entregar:\n\n"
+            "- [ ] Colocar a capa e a contra-capa\n"
+            "- [ ] Colocar os cabeçalhos nas perguntas de Múltiplas\n"
+            "- [ ] Conferir se a metodologia da capa não mistura tempos "
+            "verbais (deve estar tudo no passado)\n"
+            "- [ ] Ver se precisa da página do GDS ou se a pesquisa é online\n"
+            "- [ ] Conferir o relatório inteiro\n"
+            "- [ ] Rodar o Índice (código 16, em Códigos Individuais)"
+        )
+
         st.subheader("Log das etapas")
         for linha in st.session_state.get("ra_log", []):
             st.write(f"- {linha}")
@@ -583,13 +625,25 @@ def modulo_relatorio_automatizado():
             "dela. Por isso só aparece aqui agora, no fim de tudo."
         )
         if not st.session_state.get("ra_logo_aplicado"):
+            imagem_logo = st.file_uploader(
+                "Imagem pra usar no cabeçalho (opcional — sem enviar nada, usa o logo padrão da Informa)",
+                type=["png", "jpg", "jpeg"], key="ra_upload_logo",
+            )
             if st.button(
                 "🖼️ Adicionar logo ao arquivo final (5 cm, canto superior direito)",
                 key="ra_aplicar_logo_final",
             ):
-                caminho_logo = os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "logo.jpg"
-                )
+                if imagem_logo is not None:
+                    extensao = imagem_logo.name.rsplit(".", 1)[-1].lower()
+                    caminho_logo = os.path.join(
+                        tempfile.gettempdir(), f"ra_logo_{uuid.uuid4().hex}.{extensao}"
+                    )
+                    with open(caminho_logo, "wb") as f:
+                        f.write(imagem_logo.getvalue())
+                else:
+                    caminho_logo = os.path.join(
+                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "logo.jpg"
+                    )
                 st.session_state["ra_wb_bytes"] = inserir_imagem_cabecalho(
                     st.session_state["ra_wb_bytes"], caminho_logo, largura_cm=5.0, posicao="R",
                     aplicar_em_todas_abas=True,

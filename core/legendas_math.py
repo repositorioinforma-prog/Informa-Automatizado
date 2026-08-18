@@ -906,9 +906,11 @@ def _copiar_linha_legenda(ws_destino, linha_destino, dados_referencia, linha_ref
             if not isinstance(valor_normalizado, CellRichText):
                 cel.alignment = Alignment(horizontal="left", indent=1)
 
-    altura = dados_referencia["alturas"].get(linha_ref)
-    if altura:
-        ws_destino.row_dimensions[linha_destino].height = altura
+    # Altura fixa 13 em toda linha de legenda colada (título e item) — a
+    # pedido do Lucas, substitui a altura copiada do arquivo de
+    # referência (que variava conforme como a legenda estava formatada
+    # lá, sem relação com a altura desejada aqui no relatório).
+    ws_destino.row_dimensions[linha_destino].height = 13
 
 
 def _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino):

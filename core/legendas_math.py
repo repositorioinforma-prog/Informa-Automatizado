@@ -10,7 +10,7 @@ import openpyxl
 import unicodedata
 
 from core.base_multiplas_math import normalizar_texto
-from core.planilha_utils import inserir_linhas_seguro
+from core.planilha_utils import inserir_linhas_seguro, remover_linhas_seguro
 
 # Nomes de categoria (grupo da tabela) reconhecidos como "segmentação
 # territorial" — qualquer bloco cujo grupo bata com um destes (comparação
@@ -949,6 +949,55 @@ def _ja_tem_legenda_aqui(ws, linha_destino):
     return _eh_titulo_legenda_v2(norm)
 
 
+def _garantir_duas_linhas_apos_legenda(ws, linha_fim_legenda):
+    """
+    Garante EXATAMENTE 2 linhas em branco entre a última linha da
+    legenda recém-colada e a quebra de página que já existia logo
+    depois dela (deixada pelo código 07) — é o padrão do relatório.
+
+    Sem isso, sobra só 1 linha em branco ali: o código 07 reserva 4
+    linhas em branco depois da Pergunta (quebra de página no meio,
+    depois da 2ª), mas o ponto onde a legenda é colada
+    (`linha_pergunta + 2`) cai bem em cima da 2ª dessas 4 linhas — a
+    legenda "engole" uma das duas linhas que ficariam antes da quebra,
+    sobrando só a outra.
+
+    Não mexe em nada se não achar nenhuma quebra de página nas
+    proximidades (não força a criação de uma quebra nova, só corrige o
+    espaçamento em torno de uma que já existe).
+
+    Insere ou remove linhas ANTES da linha que segura a quebra (nunca a
+    própria linha da quebra) — removê-la faria a quebra desaparecer
+    (`remover_linhas_seguro` descarta silenciosamente uma quebra cuja
+    linha é removida; é assim que a função de segurança do projeto
+    funciona, então o cuidado tem que vir de quem chama).
+
+    Idempotente: rodar de novo não fica ajustando à toa se já estiver
+    certo. Sempre "materializa" as 2 linhas-alvo aplicando um estilo
+    (mesmo sem texto) — uma célula totalmente vazia, sem nenhum estilo,
+    some ao salvar no openpyxl.
+    """
+    from openpyxl.styles import Font
+
+    candidatos = [
+        b.id for b in ws.row_breaks.brk
+        if b.id is not None and linha_fim_legenda <= b.id <= linha_fim_legenda + 20
+    ]
+    if not candidatos:
+        return
+    quebra_id_atual = min(candidatos)
+    quebra_id_alvo = linha_fim_legenda + 2
+
+    if quebra_id_atual < quebra_id_alvo:
+        inserir_linhas_seguro(ws, linha_fim_legenda + 1, quebra_id_alvo - quebra_id_atual)
+    elif quebra_id_atual > quebra_id_alvo:
+        remover_linhas_seguro(ws, linha_fim_legenda + 1, quebra_id_atual - quebra_id_alvo)
+
+    for rr in range(linha_fim_legenda + 1, linha_fim_legenda + 3):
+        ws.row_dimensions[rr].height = 15
+        ws.cell(row=rr, column=1).font = Font(name="DIN Book", size=9)
+
+
 def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
     """
     Para cada linha 'Pergunta:' do relatório, procura — de baixo pra
@@ -1083,6 +1132,7 @@ def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
         inserir_linhas_seguro(ws, linha_destino, qtd_linhas)
 
         _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino)
+        _garantir_duas_linhas_apos_legenda(ws, linha_destino + qtd_linhas - 1)
         inseridas += 1
 
     return inseridas

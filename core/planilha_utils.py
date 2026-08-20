@@ -117,6 +117,25 @@ def remover_linhas_seguro(ws, linha_remocao, quantidade):
     ws.row_breaks.brk = quebras_restantes
 
 
+def estimar_numero_linhas(texto, largura_total_colunas, tamanho_fonte):
+    """
+    Estima quantas linhas de texto (por quebra automática) uma célula
+    com quebra de linha vai precisar, dada a largura total das colunas
+    e o tamanho da fonte — mesma aproximação por contagem de caracteres
+    usada em `estimar_altura_calculada` (ver docstring lá pras
+    ressalvas/calibração), só que devolve o número de linhas cru, sem
+    multiplicar por nenhuma altura-por-linha. Usado onde a altura final
+    precisa ser uma fórmula direta em cima do número de linhas (ex.:
+    código 12 — altura da Pergunta = nº de linhas × 15).
+    """
+    if not texto:
+        return 1
+    largura_pt = (largura_total_colunas + 0.62) * 7 * 0.90
+    largura_char = tamanho_fonte * 0.62
+    caracteres_por_linha = max(1, int(largura_pt / largura_char))
+    return max(1, math.ceil(len(str(texto)) / caracteres_por_linha))
+
+
 def estimar_altura_calculada(texto, largura_total_colunas, tamanho_fonte):
     """
     Estimativa (aproximada) da altura que uma célula com quebra de linha
@@ -141,11 +160,7 @@ def estimar_altura_calculada(texto, largura_total_colunas, tamanho_fonte):
     """
     if not texto:
         return tamanho_fonte * 1.6
-
-    largura_pt = (largura_total_colunas + 0.62) * 7 * 0.90
-    largura_char = tamanho_fonte * 0.62
-    caracteres_por_linha = max(1, int(largura_pt / largura_char))
-    n_linhas = max(1, math.ceil(len(str(texto)) / caracteres_por_linha))
+    n_linhas = estimar_numero_linhas(texto, largura_total_colunas, tamanho_fonte)
     altura_por_linha = tamanho_fonte * 1.6
     return n_linhas * altura_por_linha
 

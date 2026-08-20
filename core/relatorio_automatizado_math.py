@@ -16,6 +16,7 @@ from openpyxl.utils import get_column_letter
 
 from core.planilha_utils import (
     estimar_altura_calculada,
+    estimar_numero_linhas,
     inserir_linhas_seguro,
     largura_total_mesclagem,
     remover_linhas_seguro,
@@ -829,8 +830,12 @@ def _altura_staircase_titulo(altura_calculada):
 # =========================================================
 def aplicar_codigo_12(ws):
     """
-    Para toda célula contendo 'Pergunta: ': estima a altura (aproximada)
-    e aplica na escada 20 -> 30 -> +15/+15... Não remove o texto (esse
+    Para toda célula contendo 'Pergunta: ': estima quantas linhas o
+    texto vai ocupar (quebra automática, mesma aproximação usada nos
+    demais códigos de altura — ver `estimar_numero_linhas`) e aplica
+    altura = número de linhas × 15 (1 linha -> 15, 2 linhas -> 30, 3
+    linhas -> 45...). Fórmula fixa a pedido do Lucas — substituiu a
+    "escada" antiga (20 -> 30 -> +15/+15...). Não remove o texto (esse
     código, diferente do 11, mantém 'Pergunta: ' no texto).
     """
     alterados = 0
@@ -842,22 +847,12 @@ def aplicar_codigo_12(ws):
 
             largura = largura_total_mesclagem(ws, cel)
             tamanho_fonte = cel.font.size or 10
-            altura_calc = estimar_altura_calculada(cel.value, largura, tamanho_fonte) + 2
-            altura_final = _altura_staircase_pergunta(altura_calc)
-            ws.row_dimensions[r].height = altura_final
-            alterados += 1
+            n_linhas = estimar_numero_linhas(cel.value, largura, tamanho_fonte)
+            altura_final = n_linhas * 15
+            if ws.row_dimensions[r].height != altura_final:
+                ws.row_dimensions[r].height = altura_final
+                alterados += 1
     return alterados
-
-
-def _altura_staircase_pergunta(altura_calculada):
-    if altura_calculada <= 20:
-        return 20
-    if altura_calculada <= 30:
-        return 30
-    altura = 30
-    while altura < altura_calculada:
-        altura += 15
-    return altura
 
 
 # =========================================================
@@ -944,7 +939,10 @@ def aplicar_layout_basico_planilha(ws):
       (+ compensação empírica AJUSTE_LARGURA_COLUNA_DIN);
     - escala de impressão 100% (não "ajustar à largura");
     - toda célula mesclada na coluna A contendo 'Pergunta' ou '*' alinhada
-      à esquerda.
+      à esquerda;
+    - linhas de grade ATIVADAS (a planilha do SPSS às vezes já vem com
+      elas desligadas — força ligado em vez de só herdar o que quer que
+      o arquivo de origem tiver).
 
     (Não remove mais a linha extra abaixo de títulos 'Múltipla' — tinha
     uma tentativa de correção aqui, mas não funcionou como esperado num
@@ -953,6 +951,8 @@ def aplicar_layout_basico_planilha(ws):
     chamada; ver comentário logo abaixo.)
     """
     from openpyxl.worksheet.page import PageMargins
+
+    ws.sheet_view.showGridLines = True
 
     fonte_padrao = Font(name="DIN", size=10)
 
@@ -1273,6 +1273,18 @@ def _pagina_da_linha(linha, quebras_ordenadas, primeira_pagina):
     return primeira_pagina + cnt
 
 
+TERMOS_EXCLUIR_SUMARIO = ("CONTINUACAO", "PARA QUEM")
+
+
+def _sumario_norm(texto):
+    """Maiúsculo, sem acento — usado só pra comparar contra TOTAL/
+    SEGMENTO/os termos excluídos do sumário, sem depender de acentuação
+    exata."""
+    import unicodedata
+    t = str(texto or "").strip().upper()
+    return "".join(ch for ch in unicodedata.normalize("NFD", t) if unicodedata.category(ch) != "Mn")
+
+
 def aplicar_codigo_16(ws):
     """
     Cria (recriando se já existir) a aba "Sumário", listando o título de
@@ -1287,7 +1299,19 @@ def aplicar_codigo_16(ws):
     disponíveis diretamente em `ws.row_breaks` (mesmo mecanismo que o
     código 07 usa para inseri-las), então não há nada "visual" a simular.
 
-    Retorna a quantidade de títulos listados no sumário.
+    Formatação (a pedido do Lucas):
+        - tudo em DIN Book 9;
+        - sem linha de cabeçalho "Título"/"Página";
+        - "RESULTADOS PELO TOTAL" vira a primeira linha, em negrito, com
+          o número de página real dela (antes era só um texto solto sem
+          página nenhuma);
+        - "RESULTADOS PELOS SEGMENTOS" (já listada como qualquer outro
+          título) fica em negrito;
+        - linhas "Continuação" ou "Para quem..." (que às vezes acabam
+          mescladas na coluna A perto de uma tabela dividida ou de uma
+          Base reduzida) nunca entram na lista.
+
+    Retorna a quantidade de linhas listadas no sumário.
     """
     wb = ws.parent
 
@@ -1295,12 +1319,8 @@ def aplicar_codigo_16(ws):
         del wb["Sumário"]
     resumo = wb.create_sheet("Sumário")
 
-    resumo["A1"] = "Resultados pelo total"
-    resumo["A2"] = "Título"
-    resumo["B2"] = "Página"
-    for linha in (1, 2):
-        for col in (1, 2):
-            resumo.cell(row=linha, column=col).font = Font(bold=True)
+    fonte_padrao = Font(name="DIN Book", size=9)
+    fonte_negrito = Font(name="DIN Book", size=9, bold=True)
 
     ultima_linha = _ultima_linha_com_conteudo(ws)
 
@@ -1316,9 +1336,10 @@ def aplicar_codigo_16(ws):
         if rng.min_col <= 1 <= rng.max_col
     }
 
-    linha_sumario = 3
+    entradas = []  # (titulo, pagina, negrito)
     titulos_vistos = set()
     ignorar = False
+    pagina_total_capa = None
 
     i = 1
     while i <= ultima_linha:
@@ -1326,31 +1347,68 @@ def aplicar_codigo_16(ws):
         if rng is not None:
             altura_merge = rng.max_row - rng.min_row + 1
             titulo = str(ws.cell(row=rng.min_row, column=rng.min_col).value or "").strip()
+            titulo_norm = _sumario_norm(titulo)
 
-            titulo_upper = titulo.upper()
-            if "TOTAL" in titulo_upper:
+            if "TOTAL" in titulo_norm:
                 ignorar = True
-            elif "SEGMENTO" in titulo_upper:
+                if pagina_total_capa is None:
+                    pagina_total_capa = _pagina_da_linha(i, quebras_inicio, primeira_pagina)
+            elif "SEGMENTO" in titulo_norm:
                 ignorar = False
 
-            if not ignorar:
-                if titulo and not titulo.startswith("Pergunta") and not titulo.startswith("*"):
+            eh_termo_excluido = any(titulo_norm.startswith(t) for t in TERMOS_EXCLUIR_SUMARIO)
+
+            if not ignorar and not eh_termo_excluido and titulo:
+                if not titulo.startswith("Pergunta") and not titulo.startswith("*"):
                     if titulo not in titulos_vistos:
-                        resumo.cell(row=linha_sumario, column=1, value=titulo)
-                        resumo.cell(
-                            row=linha_sumario, column=2,
-                            value=_pagina_da_linha(i, quebras_inicio, primeira_pagina),
-                        )
+                        negrito = "SEGMENTO" in titulo_norm
+                        pagina = _pagina_da_linha(i, quebras_inicio, primeira_pagina)
+                        entradas.append((titulo, pagina, negrito))
                         titulos_vistos.add(titulo)
-                        linha_sumario += 1
 
             i += altura_merge
         else:
             i += 1
 
+    linhas_finais = []
+    if pagina_total_capa is not None:
+        linhas_finais.append(("RESULTADOS PELO TOTAL", pagina_total_capa, True))
+    linhas_finais.extend(entradas)
+
+    for idx, (titulo, pagina, negrito) in enumerate(linhas_finais, start=1):
+        fonte = fonte_negrito if negrito else fonte_padrao
+        c1 = resumo.cell(row=idx, column=1, value=titulo)
+        c2 = resumo.cell(row=idx, column=2, value=pagina)
+        c1.font = fonte
+        c2.font = fonte
+
     # Larguras aproximadas (sem AutoFit real disponível fora do Excel)
-    maior_titulo = max((len(t) for t in titulos_vistos), default=10)
+    maior_titulo = max((len(t) for t, _, _ in linhas_finais), default=10)
     resumo.column_dimensions["A"].width = max(15, min(60, maior_titulo + 2))
     resumo.column_dimensions["B"].width = 10
 
-    return len(titulos_vistos)
+    return len(linhas_finais)
+
+
+def remover_termo_do_sumario(wb, termo):
+    """
+    Remove `termo` (ex.: '(Estimulada e Única)') do texto de cada linha
+    da coluna A da aba "Sumário", colapsando o espaço duplo que sobra
+    no lugar. Não mexe em mais nada (número de página, negrito etc.
+    ficam intactos). Retorna quantas linhas foram alteradas.
+
+    Não faz nada (retorna 0) se a aba "Sumário" ainda não existir —
+    precisa rodar o código 16 primeiro.
+    """
+    if "Sumário" not in wb.sheetnames:
+        return 0
+    resumo = wb["Sumário"]
+    alterados = 0
+    for r in range(1, resumo.max_row + 1):
+        cel = resumo.cell(row=r, column=1)
+        if isinstance(cel.value, str) and termo in cel.value:
+            novo = cel.value.replace(termo, "")
+            novo = " ".join(novo.split())
+            cel.value = novo
+            alterados += 1
+    return alterados

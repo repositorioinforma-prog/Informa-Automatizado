@@ -1,35 +1,108 @@
-"""Standalone engine to detect and split report tables across printed pages.
+"""
+Divisor de Tabelas de Regiões (v2).
 
-The module is intentionally isolated from the existing report workflow. It reads
-workbooks produced by the app, detects semantic table blocks, estimates page
-breaks when Excel automatic breaks are not stored in the XLSX, and replaces
-only tables that would cross a page boundary.
+Reescrita completa a pedido do Lucas — a v1 tentava ESTIMAR
+matematicamente onde o Excel quebraria a página automaticamente
+(altura de linha, papel, margem, escala), e essa estimativa nunca bate
+100% com o que o Excel/impressora real decide. Essa incerteza, somada a
+bugs na mecânica de remontar mesclagem na hora de dividir (uma
+mesclagem que só encostava na borda da região sendo reconstruída era
+desfeita mesmo estando majoritariamente FORA dela), foi o motivo da v1
+não ter ficado como esperado.
+
+Modelo novo, bem mais simples e prático — critério FIXO, sem
+estimativa nenhuma:
+    - cada tabela vive num "slot" de página de 32 linhas: 2 em branco
+      acima + 28 linhas úteis + 2 em branco abaixo;
+    - as 28 linhas úteis contam TUDO: título, cabeçalho, labels, Base,
+      Pergunta e legenda (quando houver);
+    - se uma tabela ultrapassar as 28 linhas, é candidata a ajuste.
+
+Duas ações possíveis pra quem ultrapassa:
+    - tabela NORMAL: divide os labels em partes, repetindo
+      cabeçalho+Base+Pergunta(+legenda, se houver) em cada parte, com
+      "Continuação" a partir da 2ª;
+    - tabela PROTEGIDA (nunca pode dividir os labels no meio — ex.:
+      IPV, Avaliação com Aprovação/Regular/Reprovação): se tiver
+      legenda, a legenda é movida pra uma página própria, sem tocar nos
+      labels. Sem legenda, não tem como corrigir automaticamente — só
+      é reportada.
+
+Sem dependência do Streamlit — pode ser testado isoladamente.
 """
 from __future__ import annotations
 
+import unicodedata
 from copy import copy
 from dataclasses import dataclass
-import math
-import re
-from typing import Iterable
+from typing import Optional
 
 from openpyxl.formula.translate import Translator
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter, range_boundaries
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.pagebreak import Break
 
-from core.planilha_utils import inserir_linhas_seguro
+from core.planilha_utils import inserir_linhas_seguro, remover_linhas_seguro
 
 
-DEFAULT_ROW_HEIGHT = 15.0
-GAP_ROWS = 4
-BREAK_AFTER_GAP_ROWS = 2
-# Excel automatic page breaks depend on printer metrics that are not persisted in XLSX.
-# Keep a small vertical reserve so borderline tables are not falsely considered to fit.
-PAGINATION_RESERVE_POINTS = 18.0
-CONTINUATION_TEXT = " Continua\u00e7\u00e3o"
+# ---------------------------------------------------------------------------
+# Constantes do critério fixo
+# ---------------------------------------------------------------------------
+# O orçamento de página é em ALTURA (pontos), não em contagem de linha —
+# nem toda linha tem 15 de altura (código 09 deixa Sexo/Avaliação em 30 e
+# Escolaridade em 45, por exemplo), então uma tabela com "28 linhas" só
+# cabe de verdade nas 28 se TODAS elas tiverem a altura de referência.
+# 32 linhas de referência (15 cada) = 480 de altura total da página; 4
+# linhas de referência (2 acima + 2 abaixo, sempre altura padrão de
+# verdade, geradas por nós) = 60 reservados; sobram 420 de altura útil.
+ALTURA_LINHA_PADRAO = 15.0
+LINHAS_POR_PAGINA = 32
+LINHAS_RESERVADAS = 4  # 2 acima da tabela + 2 abaixo — nunca contam pro orçamento
+ALTURA_TOTAL_PAGINA = LINHAS_POR_PAGINA * ALTURA_LINHA_PADRAO  # 480
+ALTURA_RESERVADA = LINHAS_RESERVADAS * ALTURA_LINHA_PADRAO  # 60
+ALTURA_UTIL = ALTURA_TOTAL_PAGINA - ALTURA_RESERVADA  # 420
+
+GAP_ROWS = 4  # mesma convenção do código 07: vão padrão entre blocos
+BREAK_AFTER_GAP_ROWS = 2  # quebra de página no meio do vão de 4
+DEFAULT_ROW_HEIGHT = ALTURA_LINHA_PADRAO
+CONTINUATION_TEXT = "Continuação"
+
+# Tabelas que NUNCA podem ter os labels divididos no meio — três formas
+# de identificar, combinadas (qualquer uma que bater já protege):
+#   1) palavra-chave no TÍTULO da tabela
+GATILHOS_TITULO_PROTEGIDO = ("ipv",)
+#   2) gatilho no CONTEÚDO das células de label (mesmos gatilhos usados
+#      no código 09 pra altura fixa 30 — ver relatorio_automatizado_math.py
+#      — mais 'Rejeição', que entra só aqui, não tem altura fixa 30)
+GATILHOS_CONTEUDO_PROTEGIDO = ("aprovação", "regular", "reprovação", "rejeição")
+#   3) lista manual de títulos exatos (normalizados) — Lucas vai
+#      passando casos que não se encaixam nas regras acima
+TABELAS_PROTEGIDAS_MANUAL: set[str] = set()
 
 
+def _norm(value) -> str:
+    """Maiúsculo, sem acento, espaços colapsados — usado tanto pra
+    identificar marcadores estruturais (TOTAL/BASE/LEGENDA/PERGUNTA)
+    quanto pra comparar título/conteúdo contra os gatilhos de tabela
+    protegida."""
+    if value is None:
+        return ""
+    text = str(value).strip().upper()
+    text = "".join(
+        ch for ch in unicodedata.normalize("NFD", text)
+        if unicodedata.category(ch) != "Mn"
+    )
+    return " ".join(text.split())
+
+
+# ---------------------------------------------------------------------------
+# Detecção de tabelas — praticamente inalterada da v1 (Lucas confirmou
+# que o problema era de formatação na hora de dividir, não de
+# identificar a tabela). Único ajuste: `detectar_tabelas` (ancorada em
+# Base, pega TODA tabela, com ou sem legenda) volta a ser o detector
+# principal, já que agora o módulo também trata tabelas sem legenda —
+# antes só `detectar_tabelas_regionais` (ancorada em LEGENDA) era usada.
+# ---------------------------------------------------------------------------
 @dataclass
 class TableInfo:
     sheet: str
@@ -40,19 +113,14 @@ class TableInfo:
     label_end: int
     base_row: int
     footer_end: int
-    legend_start: int | None
-    legend_end: int | None
+    legend_start: Optional[int]
+    legend_end: Optional[int]
     title: str
 
     @property
     def end_row(self) -> int:
-        """Last row that belongs to the regional table footprint.
-
-        For regional tables the legend is part of the table. Therefore any
-        page break after the title and before the final legend row must trigger
-        a split, even when it falls on Base, Pergunta or the spacer before
-        LEGENDA.
-        """
+        """Última linha do bloco inteiro da tabela — inclui a legenda,
+        se houver."""
         return self.legend_end if self.legend_end is not None else self.footer_end
 
     @property
@@ -63,44 +131,37 @@ class TableInfo:
     def has_legend(self) -> bool:
         return self.legend_start is not None and self.legend_end is not None
 
+    @property
+    def tamanho_total(self) -> int:
+        """Quantidade de linhas FÍSICAS do bloco inteiro (título até o
+        fim, legenda incluída) — só informativo agora (pra exibir na
+        tela); a decisão de precisar de ajuste usa altura real
+        (`_altura_bloco`), não contagem de linha."""
+        return self.end_row - self.start_row + 1
 
-@dataclass
-class SplitResult:
-    sheet: str
-    title: str
-    original_start: int
-    original_end: int
-    labels: int
-    parts: int
-    part_sizes: list[int]
-    reason: str
-
-
-def _norm(value) -> str:
-    if value is None:
-        return ""
-    text = str(value).strip().upper()
-    repl = {
-        "A": "A", "E": "E", "I": "I", "O": "O", "U": "U", "C": "C",
-    }
-    try:
-        import unicodedata
-        text = "".join(
-            ch for ch in unicodedata.normalize("NFD", text)
-            if unicodedata.category(ch) != "Mn"
-        )
-    except Exception:
-        pass
-    return re.sub(r"\s+", " ", text)
+    @property
+    def tamanho_sem_legenda(self) -> int:
+        """Quantidade de linhas FÍSICAS sem a legenda — só informativo,
+        mesma ressalva acima."""
+        return self.footer_end - self.start_row + 1
 
 
 def _row_height(ws, row: int) -> float:
+    """Altura de verdade da linha — usa a altura explícita se tiver
+    (ex.: 30/45 aplicada pelo código 09), senão cai na altura padrão da
+    planilha, senão em `ALTURA_LINHA_PADRAO`."""
     dim = ws.row_dimensions.get(row)
     if dim and dim.height is not None:
         return float(dim.height)
     if ws.sheet_format.defaultRowHeight is not None:
         return float(ws.sheet_format.defaultRowHeight)
-    return DEFAULT_ROW_HEIGHT
+    return ALTURA_LINHA_PADRAO
+
+
+def _altura_bloco(ws, start: int, end: int) -> float:
+    """Soma a altura real de cada linha em [start, end] — é isso que é
+    comparado contra `ALTURA_UTIL`, não a contagem de linhas."""
+    return sum(_row_height(ws, r) for r in range(start, end + 1))
 
 
 def _row_has_content(ws, row: int) -> bool:
@@ -131,13 +192,8 @@ def _row_looks_like_data(ws, row: int) -> bool:
 
 
 def _find_footer_end(ws, base_row: int) -> int:
-    """Return the final fixed row between Base and the legend.
-
-    Production reports are not uniform: some tables have Pergunta immediately
-    after Base, while evaluation tables include rows such as ``Média`` between
-    Base and Pergunta. These post-base summary rows are part of the table and
-    must be repeated in every split.
-    """
+    """Última linha fixa entre Base e a legenda (Pergunta, e — em
+    tabelas de avaliação — uma linha 'Média' entre Base e Pergunta)."""
     end = base_row
     r = base_row + 1
     probe_limit = min(ws.max_row, base_row + 8)
@@ -157,8 +213,6 @@ def _find_footer_end(ws, base_row: int) -> int:
             if n.startswith("PERGUNTA:") or str(a or "").lstrip().startswith("*"):
                 found_question = True
                 r += 1
-                # Preserve wrapped/multiline textual footer rows immediately
-                # after the question, but never absorb the legend/new table.
                 while r <= ws.max_row and _row_has_content(ws, r):
                     nn = _norm(ws.cell(row=r, column=1).value)
                     if nn.startswith("LEGENDA") or _row_has_total(ws, r):
@@ -174,22 +228,14 @@ def _find_footer_end(ws, base_row: int) -> int:
     return end
 
 
-def _find_legend_block(ws, footer_end: int) -> tuple[int | None, int | None]:
-    """Find a LEGENDA block immediately after the table footer.
-
-    Report legends are allowed to start after a small blank spacer and continue
-    for multiple rows (including rich text). The block ends at the first blank
-    row after legend content or at the next table-like content.
-    """
+def _find_legend_block(ws, footer_end: int) -> tuple[Optional[int], Optional[int]]:
+    """Acha um bloco LEGENDA logo depois do rodapé da tabela (após um
+    pequeno vão em branco)."""
     r = footer_end + 1
-    # The report convention uses a small spacer between Pergunta and LEGENDA.
     max_probe = min(ws.max_row, footer_end + 4)
     while r <= max_probe and not _row_has_content(ws, r):
         r += 1
     legend_marker = _norm(ws.cell(row=r, column=1).value) if r <= ws.max_row else ""
-    # Production reports use markers such as "LEGENDA REGIÕES" and
-    # "LEGENDA CAPITAL", not only the literal word "LEGENDA". Treat any
-    # marker that starts with LEGENDA as the beginning of the protected block.
     if r > ws.max_row or not legend_marker.startswith("LEGENDA"):
         return None, None
 
@@ -199,7 +245,6 @@ def _find_legend_block(ws, footer_end: int) -> tuple[int | None, int | None]:
     while r <= ws.max_row:
         if not _row_has_content(ws, r):
             break
-        # Do not absorb a new report table if a malformed legend has no spacer.
         if _row_has_total(ws, r):
             break
         legend_end = r
@@ -213,12 +258,12 @@ def _find_title_row(ws, header_start: int) -> int:
         r -= 1
     if r < 1:
         return header_start
-    # A title is normally the nearest non-empty row immediately above the header.
     return r
 
 
 def detectar_tabelas(ws) -> list[TableInfo]:
-    """Detect report tables using the semantic markers Total + Base + data rows."""
+    """Detecta toda tabela do relatório (com ou sem legenda), ancorada
+    em linhas 'Base'."""
     tables: list[TableInfo] = []
     used_bases: set[int] = set()
 
@@ -230,9 +275,6 @@ def detectar_tabelas(ws) -> list[TableInfo]:
 
         header_start = None
         for r in range(base_row - 1, max(0, base_row - 100), -1):
-            # A large table may have dozens of labels between its header and Base.
-            # Stop only if another Base is reached, which means we crossed into
-            # the preceding table.
             if _norm(ws.cell(row=r, column=1).value) == "BASE":
                 break
             if _row_has_total(ws, r):
@@ -246,7 +288,6 @@ def detectar_tabelas(ws) -> list[TableInfo]:
             continue
         label_start = min(data_rows)
         label_end = max(data_rows)
-        # Require labels to be essentially contiguous. This filters out unrelated Base rows.
         if any(not _row_looks_like_data(ws, r) for r in range(label_start, label_end + 1)):
             continue
 
@@ -258,22 +299,14 @@ def detectar_tabelas(ws) -> list[TableInfo]:
 
         tables.append(
             TableInfo(
-                sheet=ws.title,
-                start_row=title_row,
-                title_row=title_row,
-                header_start=header_start,
-                label_start=label_start,
-                label_end=label_end,
-                base_row=base_row,
-                footer_end=footer_end,
-                legend_start=legend_start,
-                legend_end=legend_end,
-                title=title,
+                sheet=ws.title, start_row=title_row, title_row=title_row,
+                header_start=header_start, label_start=label_start, label_end=label_end,
+                base_row=base_row, footer_end=footer_end, legend_start=legend_start,
+                legend_end=legend_end, title=title,
             )
         )
         used_bases.add(base_row)
 
-    # De-duplicate accidental overlaps, keeping the earliest valid table.
     out: list[TableInfo] = []
     last_end = 0
     for table in sorted(tables, key=lambda t: t.start_row):
@@ -284,205 +317,43 @@ def detectar_tabelas(ws) -> list[TableInfo]:
     return out
 
 
-def detectar_tabelas_regionais(ws) -> list[TableInfo]:
-    """Fast-path detector anchored on LEGENDA markers.
-
-    The divider only operates on regional/capital tables that have a legend,
-    so scanning all Base rows in a multi-thousand-row report is unnecessary.
-    Anchoring on ``LEGENDA*`` is both faster and more faithful to the business
-    rule.
-    """
-    tables: list[TableInfo] = []
-    legend_rows = [
-        r for r in range(1, ws.max_row + 1)
-        if _norm(ws.cell(row=r, column=1).value).startswith("LEGENDA")
-    ]
-
-    for legend_start in legend_rows:
-        # Base is normally 2-4 rows above the legend (Pergunta, optional Média,
-        # spacer). Keep a wider probe for future report variants.
-        base_row = None
-        for r in range(legend_start - 1, max(0, legend_start - 15), -1):
-            if _norm(ws.cell(row=r, column=1).value) == "BASE":
-                base_row = r
-                break
-        if base_row is None:
-            continue
-
-        header_start = None
-        for r in range(base_row - 1, max(0, base_row - 100), -1):
-            if _norm(ws.cell(row=r, column=1).value) == "BASE":
-                break
-            if _row_has_total(ws, r):
-                header_start = r
-                break
-        if header_start is None:
-            continue
-
-        data_rows = [r for r in range(header_start + 1, base_row) if _row_looks_like_data(ws, r)]
-        if not data_rows:
-            continue
-        label_start = min(data_rows)
-        label_end = max(data_rows)
-        if any(not _row_looks_like_data(ws, r) for r in range(label_start, label_end + 1)):
-            continue
-
-        title_row = _find_title_row(ws, header_start)
-        footer_end = _find_footer_end(ws, base_row)
-        found_legend_start, legend_end = _find_legend_block(ws, footer_end)
-        if found_legend_start != legend_start or legend_end is None:
-            continue
-
-        title_value = ws.cell(row=title_row, column=1).value
-        title = str(title_value).strip() if title_value is not None else f"Tabela linha {title_row}"
-        tables.append(TableInfo(
-            sheet=ws.title, start_row=title_row, title_row=title_row,
-            header_start=header_start, label_start=label_start, label_end=label_end,
-            base_row=base_row, footer_end=footer_end, legend_start=legend_start,
-            legend_end=legend_end, title=title,
-        ))
-
-    return sorted(tables, key=lambda t: t.start_row)
+# ---------------------------------------------------------------------------
+# Tabela protegida
+# ---------------------------------------------------------------------------
+def eh_tabela_protegida(ws, table: TableInfo) -> bool:
+    """Uma tabela é protegida (nunca divide os labels no meio) se
+    qualquer uma das 3 regras bater — ver constantes no topo do
+    arquivo."""
+    titulo_norm = _norm(table.title)
+    if any(_norm(g) in titulo_norm for g in GATILHOS_TITULO_PROTEGIDO):
+        return True
+    if titulo_norm in {_norm(t) for t in TABELAS_PROTEGIDAS_MANUAL}:
+        return True
+    for r in range(table.label_start, table.label_end + 1):
+        for c in range(1, ws.max_column + 1):
+            valor = ws.cell(row=r, column=c).value
+            if isinstance(valor, str):
+                texto = _norm(valor)
+                if any(texto.startswith(_norm(g)) for g in GATILHOS_CONTEUDO_PROTEGIDO):
+                    return True
+    return False
 
 
-def _print_area_rows(ws) -> tuple[int, int]:
-    if ws.print_area:
-        try:
-            text = str(ws.print_area)
-            first = text.split(",")[0].replace("'", "")
-            if "!" in first:
-                first = first.split("!", 1)[1]
-            min_col, min_row, max_col, max_row = range_boundaries(first.replace("$", ""))
-            return max(1, min_row), min(ws.max_row, max_row)
-        except Exception:
-            pass
-    return 1, ws.max_row
-
-
-def _paper_height_points(ws) -> float:
-    # Point heights for common paper sizes. The app uses A4; fall back to A4.
-    paper = str(ws.page_setup.paperSize or "9")
-    heights_portrait = {
-        "1": 792.0,   # Letter 11 in
-        "5": 1008.0,  # Legal 14 in
-        "9": 841.89,  # A4 297 mm
-    }
-    widths_portrait = {
-        "1": 612.0,
-        "5": 612.0,
-        "9": 595.28,
-    }
-    orientation = (ws.page_setup.orientation or "portrait").lower()
-    if orientation == "landscape":
-        return widths_portrait.get(paper, 595.28)
-    return heights_portrait.get(paper, 841.89)
-
-
-def _usable_page_height(ws) -> float:
-    page_height = _paper_height_points(ws)
-    top = float(ws.page_margins.top or 0.75) * 72.0
-    bottom = float(ws.page_margins.bottom or 0.75) * 72.0
-    usable = max(120.0, page_height - top - bottom)
-    scale = ws.page_setup.scale
-    try:
-        scale_factor = float(scale or 100) / 100.0
-    except Exception:
-        scale_factor = 1.0
-    if scale_factor <= 0:
-        scale_factor = 1.0
-
-    # Automatic/dashed page breaks are calculated by Excel using the active
-    # printer driver. Those printer metrics are not stored in the XLSX, so a
-    # mathematically exact A4 calculation can differ by a few points from what
-    # Excel displays. Reserve a small amount of vertical space before undoing
-    # the worksheet scale. This intentionally classifies borderline cases as
-    # crossing the page instead of leaving Pergunta/LEGENDA on the next page.
-    usable = max(120.0, usable - PAGINATION_RESERVE_POINTS)
-    return usable / scale_factor
-
-
-def estimar_quebras_automaticas(ws) -> list[int]:
-    """Estimate horizontal automatic breaks from row heights and page setup.
-
-    Returned IDs follow openpyxl/Excel convention: Break(id=n) means the next
-    printed page starts at row n + 1.
-    """
-    start_row, end_row = _print_area_rows(ws)
-    manual = sorted({int(b.id) for b in ws.row_breaks.brk if b.id is not None})
-    manual_set = set(manual)
-    usable = _usable_page_height(ws)
-    breaks: list[int] = []
-    current = 0.0
-
-    for r in range(start_row, end_row + 1):
-        h = _row_height(ws, r)
-        if current > 0 and current + h > usable:
-            br = r - 1
-            if br >= start_row:
-                breaks.append(br)
-            current = 0.0
-        current += h
-        if r in manual_set:
-            current = 0.0
-
-    return sorted(set(breaks))
-
-
-def _page_context(ws, row: int, effective_breaks: Iterable[int]) -> tuple[int, float, float]:
-    """Return page start row, used height before row, and usable height."""
-    start_print, _ = _print_area_rows(ws)
-    previous = [b for b in effective_breaks if b < row]
-    page_start = (max(previous) + 1) if previous else start_print
-    used = sum(_row_height(ws, r) for r in range(page_start, row))
-    return page_start, used, _usable_page_height(ws)
-
-
-def _fixed_part_height(ws, table: TableInfo, continuation: bool) -> float:
-    # Everything outside the variable label block is repeated in every part.
-    # This includes Base, Pergunta, the spacer and the full LEGENDA block.
-    rows = list(range(table.start_row, table.label_start)) + list(range(table.base_row, table.end_row + 1))
-    return sum(_row_height(ws, r) for r in rows)
-
-
-def _balanced_sizes(total: int, parts: int) -> list[int]:
-    base = total // parts
-    rem = total % parts
-    return [base + (1 if i < rem else 0) for i in range(parts)]
-
-
-def _choose_part_sizes(ws, table: TableInfo, effective_breaks: list[int]) -> list[int]:
-    label_heights = [_row_height(ws, r) for r in range(table.label_start, table.label_end + 1)]
-    total = len(label_heights)
-    if total <= 1:
-        return [total]
-
-    crossing = _breaks_inside_table(table, effective_breaks)
-    parts = max(2, len(crossing) + 1)
-    _, used_before, usable = _page_context(ws, table.start_row, effective_breaks)
-    first_capacity = max(1.0, usable - used_before)
-    full_capacity = usable - (BREAK_AFTER_GAP_ROWS * DEFAULT_ROW_HEIGHT)
-    fixed = _fixed_part_height(ws, table, continuation=False)
-
-    while parts <= total:
-        sizes = _balanced_sizes(total, parts)
-        cursor = 0
-        fits = True
-        for i, size in enumerate(sizes):
-            labels_h = sum(label_heights[cursor:cursor + size])
-            cursor += size
-            cap = first_capacity if i == 0 else full_capacity
-            if fixed + labels_h > cap + 0.01:
-                fits = False
-                break
-        if fits:
-            return sizes
-        parts += 1
-    return [1] * total
-
-
-def _capture_block(ws, table: TableInfo):
+# ---------------------------------------------------------------------------
+# Mecânica de captura/cópia/mesclagem — reescrita do zero.
+#
+# A causa raiz do bug de formatação da v1 estava em `_clear_region`:
+# desfazia QUALQUER mesclagem que só encostasse na borda da região
+# sendo limpa (comparação por sobreposição), mesmo que a maior parte
+# dela estivesse fora — uma mesclagem que ia de A1:E3 era desfeita ao
+# limpar a região [3,10], por exemplo, mesmo só tendo 1 linha dentro.
+# Aqui só mexe em mesclagem TOTALMENTE contida na região.
+# ---------------------------------------------------------------------------
+def _capturar_bloco(ws, start: int, end: int):
+    """Tira uma 'foto' de todo o conteúdo/formatação/altura/mesclagem
+    de [start, end] antes de mexer em qualquer coisa."""
     cells = {}
-    for r in range(table.start_row, table.end_row + 1):
+    for r in range(start, end + 1):
         for c in range(1, ws.max_column + 1):
             src = ws.cell(row=r, column=c)
             cells[(r, c)] = {
@@ -494,337 +365,387 @@ def _capture_block(ws, table: TableInfo):
                 "number_format": src.number_format,
                 "protection": copy(src.protection),
             }
-    heights = {r: _row_height(ws, r) for r in range(table.start_row, table.end_row + 1)}
+    heights = {r: ws.row_dimensions[r].height for r in range(start, end + 1)}
     merges = []
     for rng in list(ws.merged_cells.ranges):
-        if rng.min_row >= table.start_row and rng.max_row <= table.end_row:
+        if rng.min_row >= start and rng.max_row <= end:
             merges.append((rng.min_row, rng.min_col, rng.max_row, rng.max_col))
     return cells, heights, merges
 
 
-def _clear_region(ws, start: int, end: int):
+def _limpar_regiao_com_seguranca(ws, start: int, end: int):
+    """Desfaz mesclagem e limpa valor/estilo em [start, end] — só mexe
+    em mesclagem TOTALMENTE contida na região (esse é o fix do bug da
+    v1: uma mesclagem que só encosta na borda, com a maior parte fora
+    da região, é preservada intacta).
+
+    Se uma mesclagem preservada (não totalmente contida) tiver alguma
+    célula "filha" dentro da região — inevitável quando ela encosta na
+    borda —, essas células são somente-leitura no openpyxl
+    (`MergedCell`) e não podem ser limpas; são simplesmente puladas.
+    """
+    from openpyxl.cell.cell import MergedCell
+
     for rng in list(ws.merged_cells.ranges):
-        if not (rng.max_row < start or rng.min_row > end):
+        if rng.min_row >= start and rng.max_row <= end:
             try:
                 ws.unmerge_cells(str(rng))
             except KeyError:
                 ws.merged_cells.ranges.discard(rng)
+
+    fonte_padrao = Font()
     for r in range(start, end + 1):
         for c in range(1, ws.max_column + 1):
-            cell = ws.cell(row=r, column=c)
-            cell.value = None
-            cell._style = copy(ws.cell(row=1, column=1)._style) if False else copy(cell._style)
-            # Explicitly clear visual style without changing column-level formatting.
-            cell.font = copy(ws.parent._named_styles[0].font)
-            cell.fill = PatternFill(fill_type=None)
-            cell.border = copy(ws.parent._named_styles[0].border)
-            cell.alignment = copy(ws.parent._named_styles[0].alignment)
-            cell.number_format = "General"
-            cell.protection = copy(ws.parent._named_styles[0].protection)
+            cel = ws.cell(row=r, column=c)
+            if isinstance(cel, MergedCell):
+                continue
+            cel.value = None
+            cel.font = copy(fonte_padrao)
+            cel.fill = copy(ws.parent._named_styles[0].fill)
+            cel.border = copy(ws.parent._named_styles[0].border)
+            cel.alignment = copy(ws.parent._named_styles[0].alignment)
+            cel.number_format = "General"
+            cel.protection = copy(ws.parent._named_styles[0].protection)
         ws.row_dimensions[r].height = None
 
 
-def _copy_snapshot_row(ws, cells, heights, source_row: int, dest_row: int):
+def _copiar_linha(ws, cells, heights, origem: int, destino: int):
+    from openpyxl.cell.cell import MergedCell
+
     for c in range(1, ws.max_column + 1):
-        data = cells[(source_row, c)]
-        dst = ws.cell(row=dest_row, column=c)
-        value = data["value"]
-        if isinstance(value, str) and value.startswith("="):
+        dst = ws.cell(row=destino, column=c)
+        if isinstance(dst, MergedCell):
+            # célula-filha de uma mesclagem preservada que encosta na
+            # região (não totalmente contida, então não foi desfeita) —
+            # somente-leitura, não dá pra escrever; pula.
+            continue
+        dado = cells[(origem, c)]
+        valor = dado["value"]
+        if isinstance(valor, str) and valor.startswith("="):
             try:
-                value = Translator(value, origin=f"{get_column_letter(c)}{source_row}").translate_formula(
-                    f"{get_column_letter(c)}{dest_row}"
-                )
+                valor = Translator(
+                    valor, origin=f"{get_column_letter(c)}{origem}"
+                ).translate_formula(f"{get_column_letter(c)}{destino}")
             except Exception:
                 pass
-        dst.value = value
-        dst.font = copy(data["font"])
-        dst.fill = copy(data["fill"])
-        dst.border = copy(data["border"])
-        dst.alignment = copy(data["alignment"])
-        dst.number_format = data["number_format"]
-        dst.protection = copy(data["protection"])
-    ws.row_dimensions[dest_row].height = heights[source_row]
+        dst.value = valor
+        dst.font = copy(dado["font"])
+        dst.fill = copy(dado["fill"])
+        dst.border = copy(dado["border"])
+        dst.alignment = copy(dado["alignment"])
+        dst.number_format = dado["number_format"]
+        dst.protection = copy(dado["protection"])
+    ws.row_dimensions[destino].height = heights[origem]
 
 
-def _replicate_merges(ws, merges, source_rows: list[int], dest_rows: list[int]):
-    mapping = dict(zip(source_rows, dest_rows))
-    selected = set(source_rows)
+def _remontar_mesclagens(ws, merges, mapa_linhas: dict[int, int]):
+    """Recria cada mesclagem original na posição de destino — só quando
+    TODAS as linhas dela têm mapeamento (ou seja, foram realmente
+    copiadas pra esta parte) E o destino continua contíguo (sem buracos
+    — uma mesclagem que caía metade numa parte e metade em outra, por
+    causa de uma divisão de labels no meio dela, é descartada em vez de
+    remontada errada)."""
     for min_r, min_c, max_r, max_c in merges:
-        source_span = set(range(min_r, max_r + 1))
-        if not source_span.issubset(selected):
+        linhas_origem = list(range(min_r, max_r + 1))
+        if not all(r in mapa_linhas for r in linhas_origem):
             continue
-        mapped = [mapping[r] for r in range(min_r, max_r + 1)]
-        if mapped != list(range(mapped[0], mapped[0] + len(mapped))):
+        linhas_destino = [mapa_linhas[r] for r in linhas_origem]
+        if linhas_destino != list(range(linhas_destino[0], linhas_destino[0] + len(linhas_destino))):
             continue
         ws.merge_cells(
-            start_row=mapped[0], start_column=min_c,
-            end_row=mapped[-1], end_column=max_c,
+            start_row=linhas_destino[0], start_column=min_c,
+            end_row=linhas_destino[-1], end_column=max_c,
         )
 
 
-def _add_break(ws, row_id: int):
+def _adicionar_quebra(ws, row_id: int):
     if row_id >= 1 and not any(int(b.id) == row_id for b in ws.row_breaks.brk if b.id is not None):
         ws.row_breaks.append(Break(id=row_id))
+        ws.row_breaks.brk = sorted(ws.row_breaks.brk, key=lambda b: int(b.id or 0))
 
 
-
-def _last_content_row(ws) -> int:
-    for r in range(ws.max_row, 0, -1):
-        if _row_has_content(ws, r):
-            return r
-    return 1
-
-
-def _refresh_print_area(ws):
-    if not ws.print_area:
-        return
-    try:
-        text = str(ws.print_area)
-        first = text.split(",")[0].replace("'", "")
-        if "!" in first:
-            first = first.split("!", 1)[1]
-        min_col, min_row, max_col, old_max_row = range_boundaries(first.replace("$", ""))
-        new_max_row = max(old_max_row, _last_content_row(ws))
-        ws.print_area = (
-            f"{get_column_letter(min_col)}{min_row}:"
-            f"{get_column_letter(max_col)}{new_max_row}"
-        )
-    except Exception:
-        pass
-
-def _extra_rows_for_split(table: TableInfo, sizes: list[int]) -> int:
-    """Rows that must be reserved below a source table before rebuilding it."""
-    prefix_len = table.label_start - table.start_row
-    suffix_len = table.end_row - table.base_row + 1
-    original_len = table.end_row - table.start_row + 1
-    new_len = sum(prefix_len + size + suffix_len for size in sizes) + GAP_ROWS * (len(sizes) - 1)
-    return max(0, new_len - original_len)
+# ---------------------------------------------------------------------------
+# Ação 1 — dividir os labels em partes (tabela NÃO protegida)
+# ---------------------------------------------------------------------------
+def _tamanhos_balanceados(total: int, partes: int) -> list[int]:
+    """Divide `total` em `partes` grupos o mais parecido possível — os
+    primeiros `resto` grupos ficam com 1 a mais (ex.: 13 labels em 2
+    partes -> [7, 6], 12 labels em 2 partes -> [6, 6])."""
+    base = total // partes
+    resto = total % partes
+    return [base + (1 if i < resto else 0) for i in range(partes)]
 
 
-def _shift_table(table: TableInfo, offset: int) -> TableInfo:
-    if offset == 0:
-        return table
-    return TableInfo(
-        sheet=table.sheet,
-        start_row=table.start_row + offset,
-        title_row=table.title_row + offset,
-        header_start=table.header_start + offset,
-        label_start=table.label_start + offset,
-        label_end=table.label_end + offset,
-        base_row=table.base_row + offset,
-        footer_end=table.footer_end + offset,
-        legend_start=(table.legend_start + offset) if table.legend_start is not None else None,
-        legend_end=(table.legend_end + offset) if table.legend_end is not None else None,
-        title=table.title,
-    )
-
-
-def _batch_insert_rows_seguro(ws, insertions: list[tuple[int, int]]) -> None:
-    """Insert multiple row blocks while remapping merges/dimensions/breaks once.
-
-    This is materially faster on long reports with thousands of custom row
-    dimensions and more than a thousand merged ranges than calling the generic
-    safe insertion helper once for every split table.
+def escolher_grupos_labels(ws, table: TableInfo) -> list[list[int]]:
     """
-    normalized = [(int(pos), int(amount)) for pos, amount in insertions if amount > 0]
-    if not normalized:
+    Agrupa as linhas de label em partes de tamanho o mais PARECIDO
+    possível (proporcional, não "enche a primeira página até estourar")
+    — ex.: 12 labels em 2 partes vira 6+6; 13 vira 7+6.
+
+    Ainda respeita a altura real de cada linha: acha o MENOR número de
+    partes onde essa divisão balanceada por contagem cabe (em altura)
+    em toda parte; só aumenta o número de partes se com aquele número
+    alguma parte ainda estourasse o espaço útil. Uma parte de 1 label
+    só é sempre aceita mesmo que estoure sozinha — não tem como dividir
+    mais que isso.
+
+    Preserva sempre a ORDEM original dos labels — nunca reordena
+    categoria de resposta.
+    """
+    prefixo_altura = _altura_bloco(ws, table.start_row, table.label_start - 1)
+    sufixo_altura = _altura_bloco(ws, table.base_row, table.end_row)
+    fixo = prefixo_altura + sufixo_altura
+    capacidade = max(0.01, ALTURA_UTIL - fixo)
+
+    linhas_labels = list(range(table.label_start, table.label_end + 1))
+    total_labels = len(linhas_labels)
+    if total_labels <= 1:
+        return [linhas_labels]
+
+    for n_partes in range(1, total_labels + 1):
+        tamanhos = _tamanhos_balanceados(total_labels, n_partes)
+        grupos = []
+        cursor = 0
+        cabe = True
+        for tam in tamanhos:
+            grupo = linhas_labels[cursor:cursor + tam]
+            cursor += tam
+            if len(grupo) > 1:
+                altura_grupo = sum(_row_height(ws, r) for r in grupo)
+                if altura_grupo > capacidade + 0.01:
+                    cabe = False
+            grupos.append(grupo)
+        if cabe:
+            return grupos
+
+    # nunca deveria chegar aqui (n_partes = total_labels sempre cabe,
+    # já que grupo de 1 label é sempre aceito) — fallback defensivo
+    return [[r] for r in linhas_labels]
+
+
+def _garantir_duas_linhas_antes_da_quebra(ws, linha_fim_legenda):
+    """
+    Garante EXATAMENTE 2 linhas em branco entre `linha_fim_legenda` e a
+    quebra de página mais próxima logo depois dela — é o padrão do
+    relatório.
+
+    Não mexe em nada se não achar nenhuma quebra nas proximidades (não
+    força a criação de uma quebra nova, só corrige o espaçamento em
+    torno de uma que já existe).
+
+    Insere ou remove linhas ANTES da linha que segura a quebra (nunca a
+    própria linha dela) — removê-la faria a quebra desaparecer
+    silenciosamente (é assim que `remover_linhas_seguro` funciona; o
+    cuidado tem que vir de quem chama).
+
+    Idempotente. Sempre "materializa" as 2 linhas-alvo aplicando um
+    estilo (mesmo sem texto) — célula totalmente vazia, sem nenhum
+    estilo, some ao salvar no openpyxl.
+    """
+    candidatos = [
+        b.id for b in ws.row_breaks.brk
+        if b.id is not None and linha_fim_legenda <= b.id <= linha_fim_legenda + 20
+    ]
+    if not candidatos:
         return
-    normalized.sort()
+    quebra_id_atual = min(candidatos)
+    quebra_id_alvo = linha_fim_legenda + 2
 
-    merges = [(rng.min_row, rng.min_col, rng.max_row, rng.max_col) for rng in list(ws.merged_cells.ranges)]
-    for rng in list(ws.merged_cells.ranges):
-        try:
-            ws.unmerge_cells(str(rng))
-        except KeyError:
-            ws.merged_cells.ranges.discard(rng)
+    if quebra_id_atual < quebra_id_alvo:
+        inserir_linhas_seguro(ws, linha_fim_legenda + 1, quebra_id_alvo - quebra_id_atual)
+    elif quebra_id_atual > quebra_id_alvo:
+        remover_linhas_seguro(ws, linha_fim_legenda + 1, quebra_id_atual - quebra_id_alvo)
 
-    row_dims = {idx: ws.row_dimensions.pop(idx) for idx in list(ws.row_dimensions.keys())}
-    breaks = list(ws.row_breaks.brk)
-    ws.row_breaks.brk = []
-
-    # Positions are based on the original sheet. Descending insertion keeps all
-    # still-pending positions valid.
-    for pos, amount in sorted(normalized, reverse=True):
-        ws.insert_rows(pos, amount=amount)
-
-    def map_row(row: int) -> int:
-        return row + sum(amount for pos, amount in normalized if pos <= row)
-
-    for idx, dim in row_dims.items():
-        new_idx = map_row(int(idx))
-        dim.index = new_idx
-        ws.row_dimensions[new_idx] = dim
-
-    for min_r, min_c, max_r, max_c in merges:
-        new_min, new_max = min_r, max_r
-        for pos, amount in normalized:
-            if pos <= new_min:
-                new_min += amount
-                new_max += amount
-            elif new_min < pos <= new_max:
-                new_max += amount
-        ws.merge_cells(start_row=new_min, start_column=min_c, end_row=new_max, end_column=max_c)
-
-    for br in breaks:
-        if br.id is not None:
-            br.id = map_row(int(br.id))
-        ws.row_breaks.brk.append(br)
+    for rr in range(linha_fim_legenda + 1, linha_fim_legenda + 3):
+        ws.row_dimensions[rr].height = DEFAULT_ROW_HEIGHT
+        ws.cell(row=rr, column=1).font = Font(name="DIN Book", size=9)
 
 
-def _split_one_table(ws, table: TableInfo, sizes: list[int], *, preallocated: bool = False) -> SplitResult:
-    cells, heights, merges = _capture_block(ws, table)
-    prefix = list(range(table.start_row, table.label_start))
-    labels = list(range(table.label_start, table.label_end + 1))
-    # Repeat the complete fixed tail in every part: Base + Pergunta + spacer + LEGENDA.
-    suffix = list(range(table.base_row, table.end_row + 1))
+def _dividir_tabela(ws, table: TableInfo) -> dict:
+    grupos = escolher_grupos_labels(ws, table)
+    if len(grupos) <= 1:
+        return {"acao": "nao_precisou", "table": table, "parts": 1, "part_sizes": [table.label_count]}
 
-    original_len = table.end_row - table.start_row + 1
-    new_len = sum(len(prefix) + size + len(suffix) for size in sizes) + GAP_ROWS * (len(sizes) - 1)
-    extra = new_len - original_len
-    if extra > 0 and not preallocated:
+    cells, heights, merges = _capturar_bloco(ws, table.start_row, table.end_row)
+    prefixo = list(range(table.start_row, table.label_start))
+    sufixo = list(range(table.base_row, table.end_row + 1))
+    part_sizes = [len(g) for g in grupos]
+
+    tamanho_original = table.end_row - table.start_row + 1
+    tamanho_novo = sum(len(prefixo) + len(g) + len(sufixo) for g in grupos) + GAP_ROWS * (len(grupos) - 1)
+    extra = tamanho_novo - tamanho_original
+    if extra > 0:
         inserir_linhas_seguro(ws, table.end_row + 1, extra)
 
-    # Any pre-existing break inside the source table is superseded by the new breaks.
+    # qualquer quebra manual pré-existente DENTRO da tabela original é
+    # substituída pelas quebras novas que vão ser adicionadas nos vãos
     ws.row_breaks.brk = [
         b for b in ws.row_breaks.brk
         if b.id is None or not (table.start_row <= int(b.id) < table.end_row)
     ]
 
-    _clear_region(ws, table.start_row, table.start_row + new_len - 1)
+    _limpar_regiao_com_seguranca(ws, table.start_row, table.start_row + tamanho_novo - 1)
 
     cursor = table.start_row
-    label_cursor = 0
-    for part_index, size in enumerate(sizes):
-        selected_labels = labels[label_cursor:label_cursor + size]
-        label_cursor += size
-        source_rows = prefix + selected_labels + suffix
-        dest_rows = []
-        for source_row in source_rows:
-            _copy_snapshot_row(ws, cells, heights, source_row, cursor)
-            dest_rows.append(cursor)
+    for parte_idx, grupo in enumerate(grupos):
+        linhas_origem = prefixo + grupo + sufixo
+
+        mapa_linhas = {}
+        for origem in linhas_origem:
+            _copiar_linha(ws, cells, heights, origem, cursor)
+            mapa_linhas[origem] = cursor
             cursor += 1
-        # Write the continuation marker before restoring merges. In production
-        # reports column A of the two-line header is vertically merged; after
-        # merge restoration a non-anchor coordinate can become a read-only
-        # MergedCell depending on the source geometry. Writing first lets the
-        # subsequent merge preserve the value in the top-left anchor.
-        if part_index > 0:
-            header_offset = prefix.index(table.header_start)
-            continuation_row = dest_rows[header_offset]
-            continuation_cell = ws.cell(row=continuation_row, column=1)
-            continuation_cell.value = CONTINUATION_TEXT.strip()
-            continuation_cell.font = Font(name="DIN", size=9, bold=True)
-            continuation_cell.alignment = Alignment(horizontal="left", vertical="center")
 
-        _replicate_merges(ws, merges, source_rows, dest_rows)
+        if parte_idx > 0:
+            offset_cabecalho = prefixo.index(table.header_start)
+            linha_continuacao = prefixo[offset_cabecalho]
+            linha_continuacao_destino = mapa_linhas[linha_continuacao]
+            cel = ws.cell(row=linha_continuacao_destino, column=1)
+            cel.value = CONTINUATION_TEXT
+            cel.font = Font(name="DIN", size=9, bold=True)
 
-        if part_index < len(sizes) - 1:
-            gap_start = cursor
-            for rr in range(gap_start, gap_start + GAP_ROWS):
+        _remontar_mesclagens(ws, merges, mapa_linhas)
+
+        if parte_idx < len(grupos) - 1:
+            inicio_vao = cursor
+            for rr in range(inicio_vao, inicio_vao + GAP_ROWS):
                 ws.row_dimensions[rr].height = DEFAULT_ROW_HEIGHT
-            _add_break(ws, gap_start + BREAK_AFTER_GAP_ROWS - 1)
+            _adicionar_quebra(ws, inicio_vao + BREAK_AFTER_GAP_ROWS - 1)
             cursor += GAP_ROWS
 
-    ws.row_breaks.brk = sorted(ws.row_breaks.brk, key=lambda b: int(b.id or 0))
-    _refresh_print_area(ws)
-    return SplitResult(
-        sheet=ws.title,
-        title=table.title,
-        original_start=table.start_row,
-        original_end=table.end_row,
-        labels=table.label_count,
-        parts=len(sizes),
-        part_sizes=sizes,
-        reason="quebra de pagina dentro da tabela",
-    )
+    # o vão DEPOIS da última parte não é criado por este laço (só as
+    # partes intermediárias ganham vão novo) — é herdado de onde a
+    # tabela original terminava, deslocado pela inserção lá em cima.
+    # Se a tabela tiver legenda, garante que esse vão herdado também
+    # tenha as 2 linhas padrão antes da quebra seguinte.
+    if table.has_legend:
+        _garantir_duas_linhas_antes_da_quebra(ws, cursor - 1)
 
-
-def _breaks_inside_table(table: TableInfo, breaks: Iterable[int]) -> list[int]:
-    """Return page breaks that split the physical footprint of a table.
-
-    Excel stores a horizontal break id as the row *after which* the page ends.
-    A break is therefore internal whenever it occurs after any row from the
-    table start up to the penultimate row of the table. This deliberately
-    includes breaks after Base, Pergunta, blank spacer rows and LEGENDA rows.
-    """
-    return sorted({int(b) for b in breaks if table.start_row <= int(b) < table.end_row})
-
-
-def analisar_planilha(ws) -> dict:
-    # This module only acts on legend-bearing regional/capital tables. Using
-    # the legend-anchored detector makes long reports substantially faster.
-    tables = detectar_tabelas_regionais(ws)
-    manual = sorted({int(b.id) for b in ws.row_breaks.brk if b.id is not None})
-    automatic = estimar_quebras_automaticas(ws)
-    effective = sorted(set(manual + automatic))
-    flagged = []
-    for table in tables:
-        if not table.has_legend:
-            continue
-        crossing = _breaks_inside_table(table, effective)
-        if crossing:
-            flagged.append({
-                "table": table,
-                "breaks": crossing,
-                "manual_breaks": [b for b in crossing if b in manual],
-                "estimated_breaks": [b for b in crossing if b in automatic],
-            })
     return {
-        "sheet": ws.title,
-        "tables": tables,
-        "manual_breaks": manual,
-        "estimated_breaks": automatic,
-        "flagged": flagged,
+        "acao": "dividida", "table": table, "parts": len(grupos), "part_sizes": part_sizes,
+        "nova_ultima_linha": cursor - 1,
     }
 
 
-def processar_workbook(wb) -> dict:
-    """Analyze report sheets and split only legend-bearing tables that cross pages."""
-    analyses = []
-    results: list[SplitResult] = []
+# ---------------------------------------------------------------------------
+# Ação 2 — mover legenda pra página própria (tabela PROTEGIDA, com legenda)
+# ---------------------------------------------------------------------------
+def _mover_legenda_para_pagina_propria(ws, table: TableInfo) -> dict:
+    gap_atual = table.legend_start - table.footer_end - 1
+    if gap_atual < GAP_ROWS:
+        inserir_linhas_seguro(ws, table.footer_end + 1, GAP_ROWS - gap_atual)
+        deslocamento = GAP_ROWS - gap_atual
+    elif gap_atual > GAP_ROWS:
+        remover_linhas_seguro(ws, table.footer_end + 1, gap_atual - GAP_ROWS)
+        deslocamento = -(gap_atual - GAP_ROWS)
+    else:
+        deslocamento = 0
 
-    # Analyze first so the UI can report what existed before modifications.
+    inicio_vao = table.footer_end + 1
+    for rr in range(inicio_vao, inicio_vao + GAP_ROWS):
+        ws.row_dimensions[rr].height = DEFAULT_ROW_HEIGHT
+
+    # limpa qualquer quebra velha dentro/perto do vão antes de adicionar a nova
+    limite_inferior = inicio_vao - 1
+    limite_superior = inicio_vao + GAP_ROWS + 1
+    ws.row_breaks.brk = [
+        b for b in ws.row_breaks.brk
+        if b.id is None or not (limite_inferior <= int(b.id) <= limite_superior)
+    ]
+    _adicionar_quebra(ws, inicio_vao + BREAK_AFTER_GAP_ROWS - 1)
+
+    nova_legend_end = table.legend_end + deslocamento
+    # o vão DEPOIS da legenda (entre ela e o que vem a seguir no
+    # relatório) não é criado por esta função — é herdado de onde a
+    # legenda terminava antes de mover, só que agora deslocado. Garante
+    # que ele também tenha as 2 linhas padrão antes da próxima quebra.
+    _garantir_duas_linhas_antes_da_quebra(ws, nova_legend_end)
+
+    return {
+        "acao": "legenda_movida", "table": table,
+        "nova_legend_start": table.legend_start + deslocamento,
+        "nova_legend_end": nova_legend_end,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Orquestração
+# ---------------------------------------------------------------------------
+def analisar_planilha(ws) -> dict:
+    tables = detectar_tabelas(ws)
+    candidatas = []
+    for table in tables:
+        altura_total = _altura_bloco(ws, table.start_row, table.end_row)
+        if altura_total <= ALTURA_UTIL + 0.01:
+            continue
+        protegida = eh_tabela_protegida(ws, table)
+        candidatas.append({
+            "table": table,
+            "tamanho": table.tamanho_total,  # informativo (contagem de linhas)
+            "altura": altura_total,  # é isso que decide, de verdade
+            "protegida": protegida,
+            "tem_legenda": table.has_legend,
+        })
+    return {"sheet": ws.title, "tables": tables, "candidatas": candidatas}
+
+
+def processar_workbook(wb) -> dict:
+    """Analisa e ajusta as tabelas do relatório inteiro segundo o
+    critério fixo de 28 linhas úteis por página."""
+    resultados_por_aba = []
+
     for ws in wb.worksheets:
         if ws.title.lower() == "sumario":
             continue
-        analyses.append(analisar_planilha(ws))
 
-    # Prepare all splits on the original geometry first. On long reports,
-    # reserving all additional rows in one batch avoids repeatedly remapping
-    # thousands of merges, row dimensions and page breaks.
-    for analysis in analyses:
-        ws = wb[analysis["sheet"]]
-        effective = sorted(set(analysis["manual_breaks"] + analysis["estimated_breaks"]))
-        prepared: list[tuple[TableInfo, list[int], int]] = []
-        for item in sorted(analysis["flagged"], key=lambda item: item["table"].start_row):
+        analise = analisar_planilha(ws)
+        # processa de baixo pra cima: inserir/remover linha numa tabela
+        # não deve invalidar a posição das tabelas ACIMA dela, já
+        # calculadas
+        candidatas_ordenadas = sorted(
+            analise["candidatas"], key=lambda c: c["table"].start_row, reverse=True
+        )
+
+        acoes = []
+        for item in candidatas_ordenadas:
             table = item["table"]
-            sizes = _choose_part_sizes(ws, table, effective)
-            if len(sizes) <= 1:
-                continue
-            extra = _extra_rows_for_split(table, sizes)
-            prepared.append((table, sizes, extra))
+            protegida = item["protegida"]
+            tem_legenda = item["tem_legenda"]
 
-        insertions = [(table.end_row + 1, extra) for table, _, extra in prepared if extra > 0]
-        _batch_insert_rows_seguro(ws, insertions)
+            if not protegida:
+                resultado = _dividir_tabela(ws, table)
+            elif tem_legenda:
+                altura_sem_legenda = _altura_bloco(ws, table.start_row, table.footer_end)
+                if altura_sem_legenda > ALTURA_UTIL + 0.01:
+                    resultado = {"acao": "nao_corrigida", "table": table, "motivo": "protegida_sem_espaco_mesmo_sem_legenda"}
+                else:
+                    resultado = _mover_legenda_para_pagina_propria(ws, table)
+            else:
+                resultado = {"acao": "nao_corrigida", "table": table, "motivo": "protegida_sem_legenda"}
 
-        # After batch reservation, tables below earlier insertions have moved.
-        # No more row insertions happen while rebuilding, so these adjusted
-        # coordinates remain stable for the entire pass.
-        for table, sizes, _extra in sorted(prepared, key=lambda item: item[0].start_row):
-            offset = sum(amount for pos, amount in insertions if pos <= table.start_row)
-            adjusted = _shift_table(table, offset)
-            results.append(_split_one_table(ws, adjusted, sizes, preallocated=True))
+            acoes.append({
+                "titulo": table.title,
+                "tamanho": item["tamanho"],
+                "altura": item["altura"],
+                "tem_legenda": tem_legenda,
+                "protegida": protegida,
+                **resultado,
+            })
 
-    results.sort(key=lambda x: (x.sheet, x.original_start))
+        resultados_por_aba.append({
+            "sheet": ws.title,
+            "tables_detected": len(analise["tables"]),
+            "acoes": acoes,
+        })
+
+    todas_acoes = [a for r in resultados_por_aba for a in r["acoes"]]
     return {
-        "sheets_analyzed": len(analyses),
-        "tables_detected": sum(len(a["tables"]) for a in analyses),
-        "tables_with_legend": sum(
-            1 for a in analyses for table in a["tables"] if table.has_legend
-        ),
-        "tables_flagged": sum(len(a["flagged"]) for a in analyses),
-        "tables_split": len(results),
-        "parts_created": sum(r.parts for r in results),
-        "results": results,
-        "analyses": analyses,
+        "sheets_analyzed": len(resultados_por_aba),
+        "tables_candidatas": len(todas_acoes),
+        "tables_divididas": sum(1 for a in todas_acoes if a["acao"] == "dividida"),
+        "legenda_movida": sum(1 for a in todas_acoes if a["acao"] == "legenda_movida"),
+        "nao_corrigidas": sum(1 for a in todas_acoes if a["acao"] == "nao_corrigida"),
+        "partes_geradas": sum(a.get("parts", 0) for a in todas_acoes if a["acao"] == "dividida"),
+        "acoes": todas_acoes,
+        "resultados_por_aba": resultados_por_aba,
     }

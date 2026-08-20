@@ -1122,7 +1122,19 @@ def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
     for linha_pergunta, chaves, qtd_linhas in planos:
         linha_destino_prevista = linha_pergunta + 2
         if _ja_tem_legenda_aqui(ws, linha_destino_prevista):
-            continue  # execução anterior já inseriu a legenda aqui — não duplica
+            # execução anterior já inseriu a legenda aqui — não duplica o
+            # conteúdo, mas AINDA ASSIM confere o espaçamento antes da
+            # quebra: uma legenda inserida por uma versão anterior do
+            # código (ou por qualquer outro motivo) pode ter ficado com
+            # esse espaçamento errado, e rodar de novo é a chance de
+            # autocorrigir isso sem duplicar nada.
+            fim_legenda_existente = linha_destino_prevista
+            r = linha_destino_prevista + 1
+            while r <= max_row and not _linha_totalmente_vazia_v2(ws, r, max_col):
+                fim_legenda_existente = r
+                r += 1
+            _garantir_duas_linhas_apos_legenda(ws, fim_legenda_existente)
+            continue
 
         linha_espaco = linha_pergunta + 1
         if not _area_vazia_v2(ws, linha_espaco, linha_espaco, max_col):

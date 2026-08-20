@@ -738,6 +738,23 @@ def processar_workbook(wb) -> dict:
             "acoes": acoes,
         })
 
+        # A área de impressão fica travada num range fixo (ex.: "A1:M3740")
+        # gravado por uma etapa anterior do fluxo — inserir linha aqui não
+        # estica esse range sozinho. Sem atualizar, tudo que a divisão de
+        # tabelas empurrar pra baixo do fim antigo cai FORA da área de
+        # impressão — no "Visualizar Quebra de Página" do Excel aparece
+        # como página cinza, mesmo com quebra/formatação corretas por
+        # baixo. Reexpande pra cobrir o conteúdo real depois de processar.
+        ultima_linha_real = ws.max_row
+        while ultima_linha_real > 1 and not _row_has_content(ws, ultima_linha_real):
+            ultima_linha_real -= 1
+        ultima_coluna_letra = get_column_letter(ws.max_column)
+        ws.print_area = f"A1:{ultima_coluna_letra}{ultima_linha_real}"
+
+        # Linhas de grade desligadas na exportação do Divisor de Tabelas —
+        # independente do que o arquivo de entrada já tinha.
+        ws.sheet_view.showGridLines = False
+
     todas_acoes = [a for r in resultados_por_aba for a in r["acoes"]]
     return {
         "sheets_analyzed": len(resultados_por_aba),

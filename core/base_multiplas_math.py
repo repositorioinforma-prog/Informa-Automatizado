@@ -265,9 +265,16 @@ def casar_base(grupo, categoria, por_par, por_categoria, por_grupo_sem_categoria
 
 
 def bloco_ja_tem_base(bloco):
-    """Verifica se o bloco já tem uma linha 'Base' nos dados (não precisa de nada)."""
+    """Verifica se o bloco já tem uma linha 'Base' OU 'Base reduzida' nos
+    dados (não precisa de nada). 'Base reduzida' já é uma base — só que
+    calculada em cima de uma amostra filtrada — então também conta.
+
+    Sem reconhecer 'Base reduzida' aqui, um bloco que já tinha essa
+    linha ainda era tratado como "sem base", e o sistema acabava
+    adicionando uma segunda linha 'Base' por cima, duplicando a
+    informação (a pergunta ficava com as duas)."""
     return any(
-        d and isinstance(d[0], str) and d[0].strip() == "Base"
+        d and isinstance(d[0], str) and d[0].strip().upper() in ("BASE", "BASE REDUZIDA")
         for d in bloco["dados"]
     )
 

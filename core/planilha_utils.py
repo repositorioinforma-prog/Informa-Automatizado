@@ -10,6 +10,51 @@ import pandas as pd
 from openpyxl.utils import get_column_letter
 
 
+def _desfazer_mesclagem_rapido(ws, rng):
+    """
+    Equivalente a `ws.unmerge_cells(str(rng))`, mas sem a checagem de
+    pertencimento que o método oficial faz — `ws.unmerge_cells()`
+    confere se a faixa existe varrendo TODAS as mesclagens do arquivo
+    (`coord in self.merged_cells`, uma comparação de sobreposição, não
+    um hash simples), o que é caro em arquivos com centenas/milhares de
+    mesclagens e sempre redundante aqui: `rng` já veio de
+    `ws.merged_cells.ranges`, então sabidamente já existe.
+
+    Faz o mesmo trabalho por baixo — remove a faixa da lista de
+    mesclagens e apaga as células "filhas" que ela criou (preservando a
+    célula-âncora, a primeira, que carrega o valor de verdade).
+    """
+    ws.merged_cells.ranges.discard(rng)
+    cells = rng.cells
+    next(cells)  # pula a célula-âncora (primeira), igual ao unmerge_cells oficial
+    for row, col in cells:
+        ws._cells.pop((row, col), None)
+
+
+def _remesclar_rapido(ws, min_row, min_col, max_row, max_col):
+    """
+    Equivalente a `ws.merge_cells(...)`, mas sem a checagem de
+    sobreposição contra TODAS as mesclagens já existentes que
+    `ws.merge_cells()` faz por padrão (comparação de sobreposição, não
+    um hash simples — o mesmo custo caro do lado do
+    `_desfazer_mesclagem_rapido`, só que na hora de mesclar de novo).
+    Redundante aqui: estamos recriando uma mesclagem que a gente mesmo
+    desfez há pouco (só deslocada por causa de uma inserção/remoção de
+    linha), então sabidamente não sobrepõe nada.
+
+    Preserva a parte legítima do `ws.merge_cells()` oficial — a
+    formatação de borda nas bordas da mesclagem —, só pula a checagem
+    de sobreposição em si.
+    """
+    from openpyxl.worksheet.cell_range import CellRange
+    from openpyxl.worksheet.merge import MergedCellRange
+
+    cr = CellRange(min_row=min_row, min_col=min_col, max_row=max_row, max_col=max_col)
+    mcr = MergedCellRange(ws, cr.coord)
+    ws.merged_cells.ranges.add(mcr)
+    ws._clean_merge_range(mcr)
+
+
 def inserir_linhas_seguro(ws, linha_insercao, quantidade):
     """
     Insere 'quantidade' linhas em branco em 'linha_insercao', deslocando
@@ -25,16 +70,7 @@ def inserir_linhas_seguro(ws, linha_insercao, quantidade):
     for rng in list(ws.merged_cells.ranges):
         if rng.min_row >= linha_insercao:
             faixas_a_remesclar.append((rng.min_row, rng.min_col, rng.max_row, rng.max_col))
-            try:
-                ws.unmerge_cells(str(rng))
-            except KeyError:
-                # openpyxl pode falhar tentando apagar células "filhas" da
-                # mesclagem que nunca foram individualmente instanciadas
-                # (acontece com mesclagens já existentes de uma execução
-                # anterior, ex.: título de uma capa criada pelo código 15).
-                # Remove a mesclagem direto do conjunto interno nesse caso,
-                # sem passar pelo método que quebra.
-                ws.merged_cells.ranges.discard(rng)
+            _desfazer_mesclagem_rapido(ws, rng)
 
     alturas_a_deslocar = {}
     for idx in list(ws.row_dimensions.keys()):
@@ -44,9 +80,9 @@ def inserir_linhas_seguro(ws, linha_insercao, quantidade):
     ws.insert_rows(linha_insercao, amount=quantidade)
 
     for min_row, min_col, max_row, max_col in faixas_a_remesclar:
-        ws.merge_cells(
-            start_row=min_row + quantidade, start_column=min_col,
-            end_row=max_row + quantidade, end_column=max_col
+        _remesclar_rapido(
+            ws, min_row=min_row + quantidade, min_col=min_col,
+            max_row=max_row + quantidade, max_col=max_col,
         )
 
     for idx, dim in alturas_a_deslocar.items():
@@ -81,10 +117,7 @@ def remover_linhas_seguro(ws, linha_remocao, quantidade):
     for rng in list(ws.merged_cells.ranges):
         if rng.min_row > linha_fim_removida:
             faixas_a_remesclar.append((rng.min_row, rng.min_col, rng.max_row, rng.max_col))
-            try:
-                ws.unmerge_cells(str(rng))
-            except KeyError:
-                ws.merged_cells.ranges.discard(rng)
+            _desfazer_mesclagem_rapido(ws, rng)
 
     alturas_a_deslocar = {}
     for idx in list(ws.row_dimensions.keys()):
@@ -97,9 +130,9 @@ def remover_linhas_seguro(ws, linha_remocao, quantidade):
     ws.delete_rows(linha_remocao, amount=quantidade)
 
     for min_row, min_col, max_row, max_col in faixas_a_remesclar:
-        ws.merge_cells(
-            start_row=min_row - quantidade, start_column=min_col,
-            end_row=max_row - quantidade, end_column=max_col
+        _remesclar_rapido(
+            ws, min_row=min_row - quantidade, min_col=min_col,
+            max_row=max_row - quantidade, max_col=max_col,
         )
 
     for idx, dim in alturas_a_deslocar.items():

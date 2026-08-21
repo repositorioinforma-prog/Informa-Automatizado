@@ -539,14 +539,23 @@ def _eh_titulo_legenda_v2(texto_normalizado):
 
 
 def _resto_representa_faixa(resto):
-    """'2 a 5', '10-15' etc. — não é um código único, é uma faixa; não vira chave."""
-    s = " " + _normalizar_texto_vba(resto) + " "
-    if not s.strip():
+    """'2 a 5', '10-15' etc. — não é um código único, é uma faixa; não
+    vira chave.
+
+    Só olha o INÍCIO do resto (o token logo colado no número, antes de
+    "(" ou ":") — checar o texto inteiro atrás de " E "/" A " em
+    qualquer lugar fazia uma descrição longa que só MENCIONASSE a
+    palavra "e" no meio (ex.: "Frigorífico e Nova Cidade", n caracteres
+    depois do número) ser confundida com faixa, mesmo sem nenhuma
+    relação com isso — foi a causa de legendas reais não serem
+    reconhecidas."""
+    s = _normalizar_texto_vba(resto).strip()
+    if not s:
         return False
-    if " E " in s or " A " in s or " ATE " in s:
+    if s.startswith("-") or s.startswith("/"):
         return True
-    t = s.strip()
-    return t.startswith("-") or t.startswith("/")
+    primeiro_token = s.split(" ", 1)[0].split("(")[0].split(":")[0]
+    return primeiro_token in ("A", "E", "ATE")
 
 
 def _extrair_codigo_numerico_inicial(valor):
@@ -705,6 +714,18 @@ def parsear_legenda_por_chave(caminho_arquivo, aba=None):
         r: [ws.cell(row=r, column=c).value for c in range(1, max_col + 1)]
         for r in range(1, max_row + 1)
     }
+    # negrito da fonte-BASE de cada célula (não dos trechos de rich
+    # text) — precisa ser guardado à parte porque um trecho de texto
+    # "solto" dentro de uma célula com rich text (ex.: o prefixo antes
+    # do ":", tipo "Região 1 (23,20%): ") não carrega formatação
+    # própria nenhuma; ele HERDA o negrito da fonte-base da célula. Sem
+    # isso, ao colar a legenda no relatório, esse prefixo perdia o
+    # negrito (a célula de destino tinha sua própria fonte-base
+    # aplicada por cima, sempre sem negrito).
+    linhas_negrito_base = {
+        r: [bool(ws.cell(row=r, column=c).font.bold) for c in range(1, max_col + 1)]
+        for r in range(1, max_row + 1)
+    }
     alturas = {}
     for r in range(1, max_row + 1):
         dim = ws.row_dimensions.get(r)
@@ -801,13 +822,14 @@ def parsear_legenda_por_chave(caminho_arquivo, aba=None):
         "mapa": mapa,
         "linhas_titulo": linhas_titulo,
         "linhas_valores": linhas_valores,
+        "linhas_negrito_base": linhas_negrito_base,
         "alturas": alturas,
         "max_col": max_col,
         "titulos_aceitos": titulos_aceitos,
     }
 
 
-def _normalizar_fonte_corpo_legenda(item):
+def _normalizar_fonte_corpo_legenda(item, negrito_base=False):
     """
     Força fonte DIN Book tamanho 9 preta em TODOS os trechos de um item
     de legenda (rich text) — inclusive no prefixo em negrito antes do
@@ -815,10 +837,20 @@ def _normalizar_fonte_corpo_legenda(item):
     família/tamanho/cor. Sem isso, o prefixo em negrito ficava com a
     fonte que o arquivo de referência original usava (nem sempre DIN
     Book), inconsistente com o resto do relatório.
+
+    Um trecho "solto" (string pura, sem TextBlock) dentro do rich text
+    não carrega formatação própria — ele herda a fonte-BASE da célula
+    de origem (`negrito_base`, capturada à parte na hora de ler o
+    arquivo de referência). Precisa virar um TextBlock explícito com
+    esse negrito; senão, ao colar no relatório, ele passa a herdar a
+    fonte-base da célula de DESTINO (sempre sem negrito), perdendo a
+    formatação — foi assim que o prefixo antes do ":" ficava sem
+    negrito nenhum no relatório final.
     """
     from copy import copy as _copy_style
 
     from openpyxl.cell.rich_text import CellRichText, TextBlock
+    from openpyxl.cell.text import InlineFont
     from openpyxl.styles.colors import Color
 
     if not isinstance(item, CellRichText):
@@ -833,7 +865,10 @@ def _normalizar_fonte_corpo_legenda(item):
                 nova_fonte.color = Color(rgb="FF000000")
             novos_blocos.append(TextBlock(nova_fonte, bloco.text))
         else:
-            novos_blocos.append(bloco)
+            fonte_trecho_solto = InlineFont(
+                rFont="DIN Book", sz=9, b=negrito_base, color=Color(rgb="FF000000")
+            )
+            novos_blocos.append(TextBlock(fonte_trecho_solto, bloco))
     return CellRichText(novos_blocos)
 
 
@@ -886,8 +921,10 @@ def _copiar_linha_legenda(ws_destino, linha_destino, dados_referencia, linha_ref
     from openpyxl.styles import Alignment, Font
 
     valores = dados_referencia["linhas_valores"].get(linha_ref, [])
+    negritos_base = dados_referencia.get("linhas_negrito_base", {}).get(linha_ref, [])
     for c in range(1, max_col_destino + 1):
         valor = valores[c - 1] if c - 1 < len(valores) else None
+        negrito_base_c = negritos_base[c - 1] if c - 1 < len(negritos_base) else False
 
         if tipo == "titulo":
             valor_normalizado = _normalizar_fonte_titulo_legenda(valor)
@@ -896,7 +933,7 @@ def _copiar_linha_legenda(ws_destino, linha_destino, dados_referencia, linha_ref
                 cel.font = Font(name="DIN", size=10, bold=True, color="FF000000")
             continue
 
-        valor_normalizado = _normalizar_fonte_corpo_legenda(_forcar_cor_preta(valor))
+        valor_normalizado = _normalizar_fonte_corpo_legenda(_forcar_cor_preta(valor), negrito_base_c)
         cel = ws_destino.cell(row=linha_destino, column=c, value=valor_normalizado)
         if c == 1 and valor is not None:
             # fonte de base da célula — cobre tanto o texto simples de

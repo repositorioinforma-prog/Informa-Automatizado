@@ -21,6 +21,7 @@ import os
 import base64
 
 import openpyxl
+import pandas as pd
 import streamlit as st
 
 from core.legendas_math import parsear_legenda_por_chave, aplicar_legendas_por_chave
@@ -40,6 +41,7 @@ from core.total_automatico_math import (
     detectar_bases_divergentes,
     remover_linha_branca_multiplas_sem_base,
 )
+from core.divisor_tabelas_math import processar_workbook as processar_divisor_tabelas
 from core.relatorio_automatizado_math import (
     aplicar_codigo_01,
     aplicar_codigo_02,
@@ -54,6 +56,8 @@ from core.relatorio_automatizado_math import (
     aplicar_codigo_11,
     aplicar_codigo_12,
     aplicar_codigo_14,
+    aplicar_codigo_16,
+    remover_termo_do_sumario,
 )
 from core.relatorio_automatizado_math import TERMOS_EXCLUSAO_CODIGO_03
 
@@ -527,11 +531,12 @@ def modulo_relatorio_automatizado():
             "quebradas/duplicadas."
         )
         st.info(
-            "**Sexo, Idade, Renda, Escolaridade, Religiões, Avaliações  "
-            "e Voto no 2º Turno já vêm pré-configurados** nos padrões  "
-            "do relatório —não precisa subir arquivo de referência pra "
-            "corrigir esses seis tipos. Só é necessário subir um arquivo "
-            "aqui se tiver **outra** segmentação vindo quebrada."
+            "**Sexo, Idade, Renda, Escolaridade, Religiões, Voto no 2º "
+            "Turno e Avaliações (Aprovação/Reprovação) já vêm "
+            "pré-configurados** nos padrões do relatório — não precisa "
+            "subir arquivo de referência pra corrigir esses tipos. Só é "
+            "necessário subir um arquivo aqui se tiver **outra** "
+            "segmentação vindo quebrada."
         )
         arquivo_ref_13 = st.file_uploader(
             "Arquivo de referência dos cabeçalhos (.xlsx)", type=["xlsx"], key="ra_ref_13"
@@ -733,4 +738,119 @@ def modulo_relatorio_automatizado():
                 + "reproduz mesclagem, cor de fundo, negrito/itálico, alinhamento e bordas, "
                 "mas é uma aproximação; o arquivo baixado é a fonte da verdade."
             )
+
+        st.divider()
+        st.subheader("Dividir Tabelas + Índice (opcional)")
+        st.caption(
+            "Continua direto daqui, em cima do arquivo que acabou de ser "
+            "gerado — sem precisar baixar e reenviar em outra tela: "
+            "primeiro divide as tabelas que passarem do limite de altura "
+            "útil por página, depois gera o Índice (que precisa rodar "
+            "DEPOIS da divisão, já que dividir tabela desloca a "
+            "paginação — gerar o índice antes deixaria os números de "
+            "página errados)."
+        )
+        if st.button("Dividir tabelas e gerar Índice", key="ra_dividir_e_indexar"):
+            with st.status("Dividindo tabelas e gerando o Índice...", expanded=True) as status:
+                wb_div = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
+                status.update(label="Analisando e dividindo tabelas...")
+                resumo_divisor = processar_divisor_tabelas(wb_div)
+                status.update(label="Gerando o Índice...")
+                n_titulos = aplicar_codigo_16(wb_div.active)
+                saida_div = io.BytesIO()
+                wb_div.save(saida_div)
+                status.update(label="Concluído!", state="complete")
+
+            st.session_state["ra_wb_bytes_dividido"] = saida_div.getvalue()
+            st.session_state["ra_resumo_divisor"] = resumo_divisor
+            st.success(f"Tabelas processadas. Índice gerado com {n_titulos} título(s) listado(s).")
+
+        resumo_divisor = st.session_state.get("ra_resumo_divisor")
+        wb_bytes_dividido = st.session_state.get("ra_wb_bytes_dividido")
+        if resumo_divisor and wb_bytes_dividido is not None:
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1.metric("Abas analisadas", resumo_divisor["sheets_analyzed"])
+            c2.metric("Tabelas candidatas", resumo_divisor["tables_candidatas"])
+            c3.metric("Divididas", resumo_divisor["tables_divididas"])
+            c4.metric("Legenda movida", resumo_divisor["legenda_movida"])
+            c5.metric("Não corrigidas", resumo_divisor["nao_corrigidas"])
+            c6.metric("Partes geradas", resumo_divisor["partes_geradas"])
+
+            if resumo_divisor["nao_corrigidas"]:
+                titulos_nao_corrigidas = [
+                    a["titulo"] for a in resumo_divisor["acoes"] if a["acao"] == "nao_corrigida"
+                ]
+                lista_nc = "\n".join(f"- {t}" for t in titulos_nao_corrigidas)
+                st.warning(
+                    "Tabela(s) protegida(s) sem legenda (ou onde nem sem "
+                    "legenda cabe nas linhas úteis) — passam do limite "
+                    "mas não têm como ser corrigidas automaticamente sem "
+                    "dividir os labels no meio. Precisam de ajuste "
+                    "manual:\n\n" + lista_nc
+                )
+
+            if resumo_divisor["tables_candidatas"]:
+                rows_divisor = [
+                    {
+                        "Aba": a["table"].sheet,
+                        "Tabela": a["titulo"],
+                        "Ação": {
+                            "dividida": "Dividida em partes",
+                            "legenda_movida": "Legenda movida pra página própria",
+                            "nao_corrigida": "Não corrigida automaticamente",
+                        }.get(a["acao"], a["acao"]),
+                        "Partes": a.get("parts", "-"),
+                    }
+                    for a in resumo_divisor["acoes"]
+                ]
+                st.dataframe(pd.DataFrame(rows_divisor), use_container_width=True, hide_index=True)
+
+            original_name = st.session_state.get("ra_nome_arquivo", "relatorio.xlsx")
+            if "." in original_name:
+                stem, ext = original_name.rsplit(".", 1)
+                output_name_final = f"{stem}_tabelas_divididas_com_indice.{ext}"
+            else:
+                output_name_final = original_name + "_tabelas_divididas_com_indice.xlsx"
+
+            st.download_button(
+                "Baixar relatório dividido + com Índice",
+                data=wb_bytes_dividido,
+                file_name=output_name_final,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="ra_download_dividido_indice",
+            )
+
+            st.markdown("**Prévia do Sumário**")
+            wb_preview_final = openpyxl.load_workbook(io.BytesIO(wb_bytes_dividido), rich_text=True)
+            sumario_ws_final = wb_preview_final["Sumário"]
+            preview_rows_final = [
+                {
+                    "Título": sumario_ws_final.cell(row=r, column=1).value,
+                    "Página": sumario_ws_final.cell(row=r, column=2).value,
+                }
+                for r in range(1, sumario_ws_final.max_row + 1)
+                if sumario_ws_final.cell(row=r, column=1).value is not None
+            ]
+            st.dataframe(pd.DataFrame(preview_rows_final), use_container_width=True, hide_index=True)
+
+            st.caption("Remover termo de todos os títulos do Sumário:")
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("Remover \"(Estimulada e Única)\"", key="ra_remover_unica"):
+                    wb_edit = openpyxl.load_workbook(io.BytesIO(wb_bytes_dividido), rich_text=True)
+                    n = remover_termo_do_sumario(wb_edit, "(Estimulada e Única)")
+                    saida_edit = io.BytesIO()
+                    wb_edit.save(saida_edit)
+                    st.session_state["ra_wb_bytes_dividido"] = saida_edit.getvalue()
+                    st.success(f"Termo removido de {n} título(s).")
+                    st.rerun()
+            with col_b:
+                if st.button("Remover \"(Estimulada e Múltipla)\"", key="ra_remover_multipla"):
+                    wb_edit = openpyxl.load_workbook(io.BytesIO(wb_bytes_dividido), rich_text=True)
+                    n = remover_termo_do_sumario(wb_edit, "(Estimulada e Múltipla)")
+                    saida_edit = io.BytesIO()
+                    wb_edit.save(saida_edit)
+                    st.session_state["ra_wb_bytes_dividido"] = saida_edit.getvalue()
+                    st.success(f"Termo removido de {n} título(s).")
+                    st.rerun()
         return

@@ -436,6 +436,62 @@ def gerar_workbook_com_base(caminho_multiplas, blocos_multiplas, linhas_base, ab
     max_col = ws_origem.max_column
     lado_vazio = Side(border_style=None)
 
+    def _estilos_borda_por_coluna_no_bloco(linha_pergunta, qtd_dados):
+        """
+        Tabela de Múltipla não sai do SPSS com linha de Base — e como a
+        borda de fechamento visual da tabela normalmente vem junto da
+        linha de Base, sem ela às vezes não sobra NENHUMA borda pra
+        herdar na última linha de dados (não é bug de captura, nunca
+        existiu). Nesse caso, em vez de inventar um estilo, procura
+        alguma borda que já esteja em uso em cada COLUNA da própria
+        tabela (ex.: o divisor logo abaixo do cabeçalho 'Total') e
+        reaproveita esse mesmo estilo/cor pra fechar a tabela — segue o
+        padrão que já existe ali, em vez de um valor fixo arbitrário.
+
+        Devolve um dict {coluna: Side} — SÓ com as colunas que
+        realmente tiveram alguma borda em algum lugar da tabela. Uma
+        tabela pode ter só 2 colunas de dado (ex.: rótulo + Total)
+        mesmo a planilha inteira tendo 13 colunas (por causa de OUTRA
+        tabela, segmentada, mais larga, em outro lugar do arquivo) —
+        sem essa checagem por coluna, a borda de fechamento acabava
+        indo parar em colunas de fora da tabela, que nunca tiveram
+        conteúdo nem borda nenhuma ali.
+        """
+        primeira_linha_dados = linha_pergunta - qtd_dados
+        linha_busca = max(1, primeira_linha_dados - 2)  # inclui a linha de grupo/cabeçalho
+        estilos = {}
+        for r in range(linha_busca, linha_pergunta):
+            for c in range(1, max_col + 1):
+                if c in estilos:
+                    continue
+                b = ws_origem.cell(row=r, column=c).border
+                for lado in (b.top, b.bottom, b.left, b.right):
+                    if lado is not None and lado.style:
+                        estilos[c] = Side(style=lado.style, color=_copy_style(lado.color))
+                        break
+        return estilos
+
+    def _colunas_reais_do_bloco(b_bloco):
+        """Colunas (1-indexado, absoluto) onde a tabela REALMENTE tem
+        algum dado — usado pra saber até onde a borda de fechamento
+        deve se espalhar quando a coluna não tem nenhum padrão de
+        borda próprio pra copiar, mas ainda assim é parte real da
+        tabela (não pode ficar sem nenhuma borda só porque não achou
+        um padrão específico pra ela)."""
+        colunas = {1}
+        for linha_dado in b_bloco["dados"]:
+            for i, v in enumerate(linha_dado):
+                if v is not None:
+                    colunas.add(i + 1)
+        return colunas
+
+    cache_colunas_reais_por_bloco = {}
+
+    def _cache_colunas_reais(idx_bloco):
+        if idx_bloco not in cache_colunas_reais_por_bloco:
+            cache_colunas_reais_por_bloco[idx_bloco] = _colunas_reais_do_bloco(blocos_multiplas[idx_bloco])
+        return cache_colunas_reais_por_bloco[idx_bloco]
+
     # mapa: linha original (a última linha de dados de um bloco) -> índice do bloco
     # blocos que JÁ têm 'Base' (relatório misto) ficam de fora — não são tocados
     ultima_linha_por_bloco = {
@@ -444,10 +500,35 @@ def gerar_workbook_com_base(caminho_multiplas, blocos_multiplas, linhas_base, ab
         if b["linha_pergunta"] and not linhas_base[idx].get("ja_tinha_base")
     }
 
+    # borda de fechamento "padrão" pra usar SÓ na coluna do rótulo
+    # (coluna 1 — sempre parte real de qualquer tabela) quando nem ela
+    # tem nenhuma borda em lugar nenhum da tabela pra copiar o estilo
+    # (caso raro) — as demais colunas, se não tiverem padrão próprio
+    # encontrado, ficam sem borda (não inventa em coluna que pode nem
+    # pertencer a essa tabela).
+    borda_fallback_absoluta = Side(style="thick")
+    cache_estilos_por_bloco = {}
+
+    def _cache_estilos_bloco(idx_bloco):
+        if idx_bloco not in cache_estilos_por_bloco:
+            b_bloco = blocos_multiplas[idx_bloco]
+            cache_estilos_por_bloco[idx_bloco] = _estilos_borda_por_coluna_no_bloco(
+                b_bloco["linha_pergunta"], len(b_bloco["dados"])
+            )
+        return cache_estilos_por_bloco[idx_bloco]
+
     def _copiar_celula(cel_origem, cel_destino, bottom_override=None, negrito=None,
                         formato_numero=None):
         cel_destino.value = cel_origem.value
         if not cel_origem.has_style:
+            # Sem NENHUM estilo próprio na célula de origem (comum em
+            # células "cruas" do SPSS, sem nenhuma formatação prévia) —
+            # nada a copiar, mas se tiver uma borda de fechamento
+            # explícita pra aplicar mesmo assim (bottom_override), não
+            # pode sair sem aplicá-la, senão a linha "Base" nova fica
+            # sem borda nenhuma mesmo quando synthesizamos uma.
+            if bottom_override is not None and bottom_override.style:
+                cel_destino.border = Border(bottom=bottom_override)
             return
         fonte_origem = cel_origem.font
         if negrito is not None:
@@ -483,10 +564,40 @@ def gerar_workbook_com_base(caminho_multiplas, blocos_multiplas, linhas_base, ab
             cel_origem = ws_origem.cell(row=linha_origem_idx, column=col)
             cel_destino = ws_novo.cell(row=linha_destino, column=col)
             if idx_bloco_desta_linha is not None:
-                # última linha de dados: guarda a borda inferior original e remove
-                bordas_removidas.setdefault(idx_bloco_desta_linha, {})[col] = (
-                    _copy_style(cel_origem.border.bottom)
-                )
+                # última linha de dados: guarda a borda inferior original e
+                # remove. Tabela de Múltipla não sai do SPSS com linha de
+                # Base — e é a linha "Base" que costuma carregar a borda de
+                # fechamento visual da tabela; sem ela, a última linha de
+                # dados às vezes não tem NENHUMA borda pra herdar (não é bug
+                # de captura, é que nunca existiu). Nesse caso, reaproveita
+                # o estilo de borda que já está em uso em outro lugar da
+                # própria tabela (ex.: o divisor abaixo do cabeçalho) em
+                # vez de inventar um valor fixo.
+                borda_original = cel_origem.border.bottom
+                if borda_original and borda_original.style:
+                    borda_para_usar = _copy_style(borda_original)
+                else:
+                    estilos_col = _cache_estilos_bloco(idx_bloco_desta_linha)
+                    estilo_col = estilos_col.get(col)
+                    if estilo_col is not None:
+                        # essa coluna específica já tem um padrão de
+                        # borda em algum lugar da tabela — usa ele
+                        borda_para_usar = estilo_col
+                    elif col in _cache_colunas_reais(idx_bloco_desta_linha):
+                        # coluna sem padrão PRÓPRIO, mas com dado de
+                        # verdade nessa tabela — usa o padrão geral
+                        # encontrado em qualquer outra coluna da mesma
+                        # tabela (ex.: o divisor do cabeçalho, que às
+                        # vezes só tem borda numa faixa de colunas),
+                        # ou o valor fixo se a tabela não tiver NENHUM
+                        # padrão em lugar nenhum
+                        estilo_geral = next(iter(estilos_col.values()), None)
+                        borda_para_usar = estilo_geral or _copy_style(borda_fallback_absoluta)
+                    else:
+                        # coluna sem dado nenhum nessa tabela — não
+                        # pertence a ela, não inventa borda aqui
+                        borda_para_usar = _copy_style(lado_vazio)
+                bordas_removidas.setdefault(idx_bloco_desta_linha, {})[col] = borda_para_usar
                 _copiar_celula(cel_origem, cel_destino, bottom_override=lado_vazio)
             else:
                 _copiar_celula(cel_origem, cel_destino)

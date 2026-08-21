@@ -19,8 +19,6 @@ Não depende do `dados` carregado no início do app: tem upload próprio.
 import io
 import os
 import base64
-import tempfile
-import uuid
 
 import openpyxl
 import streamlit as st
@@ -35,12 +33,12 @@ from core.base_multiplas_math import (
 )
 from core.planilha_utils import worksheet_para_html
 from core.pdf_preview import gerar_pdf_preview, wkhtmltopdf_disponivel
-from core.cabecalho_imagem import inserir_imagem_cabecalho
 from core.cabecalho_correcao_math import parsear_blocos_cabecalho_referencia, aplicar_codigo_13
 from core.capas_resultados_math import aplicar_codigo_15
 from core.total_automatico_math import (
     encontrar_perguntas_com_base_reduzida,
     detectar_bases_divergentes,
+    remover_linha_branca_multiplas_sem_base,
 )
 from core.relatorio_automatizado_math import (
     aplicar_codigo_01,
@@ -142,6 +140,7 @@ def _aplicar_sequencia(passos):
 # "if etapa == ..." abaixo). Etapas de tela pura (aviso/upload) ficam de
 # fora da contagem, já que não envolvem processamento.
 _ETAPAS_COM_PROGRESSO = [
+    ("limpeza_multiplas", "Limpeza de linha branca (Múltiplas sem base)"),
     ("base_multiplas", "Base nas Múltiplas"),
     ("origem", "Preenche células / bordas (01-02)"),
     ("novos_termos", "Ordenar tabelas (03)"),
@@ -207,12 +206,41 @@ def modulo_relatorio_automatizado():
             st.session_state["ra_wb_bytes"] = arquivo.read()
             st.session_state["ra_nome_arquivo"] = arquivo.name
             _log("Relatório carregado.")
-            _ir_para("base_multiplas")
+            _ir_para("limpeza_multiplas")
         return
 
     # A partir daqui, sempre existe um arquivo em andamento em
     # st.session_state["ra_wb_bytes"] — mostramos isso pra situar a pessoa
     st.caption(f"Arquivo em andamento: **{st.session_state.get('ra_nome_arquivo', '?')}**")
+
+    # ---------------------------------------------------------------
+    if etapa == "limpeza_multiplas":
+        st.subheader("Limpeza de linha branca (Múltiplas sem base)")
+        st.caption(
+            "Tabelas de pergunta do tipo Múltipla às vezes saem do SPSS "
+            "com uma linha em branco entre o título e a tabela. Esta "
+            "etapa procura essa linha SOMENTE nas tabelas de Múltipla "
+            "que ainda não têm uma linha 'Base' por perto, e só remove "
+            "quando a linha estiver realmente vazia — sem nenhum valor, "
+            "borda ou cor. Se tiver qualquer conteúdo ou formatação, a "
+            "linha fica intacta."
+        )
+        if st.button("Aplicar e continuar", key="ra_limpeza_continuar"):
+            with st.spinner("Verificando tabelas de Múltipla..."):
+                wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
+                ws = wb.active
+                resultado = remover_linha_branca_multiplas_sem_base(ws)
+                saida = io.BytesIO()
+                wb.save(saida)
+                st.session_state["ra_wb_bytes"] = saida.getvalue()
+            _log(
+                f"Limpeza de linha branca (Múltiplas sem base): "
+                f"{resultado['removidas']} linha(s) removida(s), "
+                f"{resultado['mantidas']} mantida(s) por terem "
+                f"conteúdo/formatação."
+            )
+            _ir_para("base_multiplas")
+        return
 
     # ---------------------------------------------------------------
     if etapa == "base_multiplas":
@@ -498,6 +526,13 @@ def modulo_relatorio_automatizado():
             "artefato de codificação, hifenização diferente e mesclagens "
             "quebradas/duplicadas."
         )
+        st.info(
+            "**Sexo, Idade, Renda, Escolaridade, Religiões, Avaliações  "
+            "e Voto no 2º Turno já vêm pré-configurados** nos padrões  "
+            "do relatório —não precisa subir arquivo de referência pra "
+            "corrigir esses seis tipos. Só é necessário subir um arquivo "
+            "aqui se tiver **outra** segmentação vindo quebrada."
+        )
         arquivo_ref_13 = st.file_uploader(
             "Arquivo de referência dos cabeçalhos (.xlsx)", type=["xlsx"], key="ra_ref_13"
         )
@@ -615,43 +650,29 @@ def modulo_relatorio_automatizado():
         for linha in st.session_state.get("ra_log", []):
             st.write(f"- {linha}")
 
-        st.subheader("Logo no cabeçalho (opcional)")
+        st.subheader("Logo da Informa")
         st.caption(
-            "⚠️ [Experimental] Precisa ser o ÚLTIMO passo antes de baixar — "
-            "qualquer código que rode depois faz o Excel reabrir e resalvar "
-            "o arquivo, e como o formato de imagem em cabeçalho é um "
-            "recurso legado que o openpyxl não entende, ele descarta a "
-            "imagem silenciosamente se algo mais mexer no arquivo depois "
-            "dela. Por isso só aparece aqui agora, no fim de tudo."
+            "O passo de aplicar o logo direto no cabeçalho do Excel foi "
+            "removido daqui — não funcionava de forma confiável (imagem "
+            "em cabeçalho é um recurso legado que o Excel/openpyxl tratam "
+            "de forma frágil), então esse passo passou a ser feito "
+            "manualmente, direto no Excel. Baixe a imagem abaixo caso não "
+            "tenha ela disponível no computador de quem for rodar o "
+            "relatório."
         )
-        if not st.session_state.get("ra_logo_aplicado"):
-            imagem_logo = st.file_uploader(
-                "Imagem pra usar no cabeçalho (opcional — sem enviar nada, usa o logo padrão da Informa)",
-                type=["png", "jpg", "jpeg"], key="ra_upload_logo",
+        caminho_logo_padrao = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "logo.jpg"
+        )
+        if os.path.exists(caminho_logo_padrao):
+            with open(caminho_logo_padrao, "rb") as f:
+                logo_bytes = f.read()
+            st.download_button(
+                "🖼️ Baixar logo da Informa",
+                data=logo_bytes,
+                file_name="logo_informa.jpg",
+                mime="image/jpeg",
+                key="ra_download_logo",
             )
-            if st.button(
-                "🖼️ Adicionar logo ao arquivo final (5 cm, canto superior direito)",
-                key="ra_aplicar_logo_final",
-            ):
-                if imagem_logo is not None:
-                    extensao = imagem_logo.name.rsplit(".", 1)[-1].lower()
-                    caminho_logo = os.path.join(
-                        tempfile.gettempdir(), f"ra_logo_{uuid.uuid4().hex}.{extensao}"
-                    )
-                    with open(caminho_logo, "wb") as f:
-                        f.write(imagem_logo.getvalue())
-                else:
-                    caminho_logo = os.path.join(
-                        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "logo.jpg"
-                    )
-                st.session_state["ra_wb_bytes"] = inserir_imagem_cabecalho(
-                    st.session_state["ra_wb_bytes"], caminho_logo, largura_cm=5.0, posicao="R",
-                    aplicar_em_todas_abas=True,
-                )
-                st.session_state["ra_logo_aplicado"] = True
-                st.rerun()
-        else:
-            st.caption("✅ Logo já aplicado a este arquivo — baixe abaixo.")
 
         st.download_button(
             "Baixar relatório processado",

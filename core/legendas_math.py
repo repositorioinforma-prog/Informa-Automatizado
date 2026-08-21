@@ -929,9 +929,10 @@ def _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino):
 
     _copiar_linha_legenda(ws, linha_destino, dados_referencia, linha_titulo_ref, max_col, tipo="titulo")
 
-    # a legenda em si começa IMEDIATAMENTE na linha seguinte ao título —
-    # sem linha em branco de separação entre as duas
-    linha_atual = linha_destino + 1
+    # a legenda em si começa DUAS linhas abaixo do título — uma linha em
+    # branco de propósito entre as duas, igual ao padrão do arquivo de
+    # referência (título, linha em branco, primeiro item)
+    linha_atual = linha_destino + 2
     for chave in chaves:
         if chave not in mapa:
             continue
@@ -1110,8 +1111,8 @@ def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
         if linha_cabecalho:
             qtd_linhas = sum(
                 mapa[k]["linha_fim"] - mapa[k]["linha_inicio"] + 1 for k in chaves_melhor if k in mapa
-            ) + 1  # +1 = só a linha do título; a legenda começa logo em seguida, sem linha em branco
-            if qtd_linhas > 1:
+            ) + 2  # +1 = a linha do título; +1 = a linha em branco antes do primeiro item
+            if qtd_linhas > 2:
                 planos.append((linha_pergunta, chaves_melhor, qtd_linhas))
 
     if not planos:
@@ -1127,9 +1128,13 @@ def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
             # quebra: uma legenda inserida por uma versão anterior do
             # código (ou por qualquer outro motivo) pode ter ficado com
             # esse espaçamento errado, e rodar de novo é a chance de
-            # autocorrigir isso sem duplicar nada.
+            # autocorrigir isso sem duplicar nada. Pula a linha em
+            # branco logo depois do título (linha_destino_prevista+1) —
+            # ela é de propósito, não é "o fim da legenda"; sem pular
+            # explicitamente, essa varredura parava bem ali, tratando o
+            # título como se já fosse o fim.
             fim_legenda_existente = linha_destino_prevista
-            r = linha_destino_prevista + 1
+            r = linha_destino_prevista + 2
             while r <= max_row and not _linha_totalmente_vazia_v2(ws, r, max_col):
                 fim_legenda_existente = r
                 r += 1

@@ -333,8 +333,12 @@ def eh_tabela_protegida(ws, table: TableInfo) -> bool:
         for c in range(1, ws.max_column + 1):
             valor = ws.cell(row=r, column=c).value
             if isinstance(valor, str):
-                texto = _norm(valor)
-                if any(texto.startswith(_norm(g)) for g in GATILHOS_CONTEUDO_PROTEGIDO):
+                # sem hífen/espaço aqui — o código 04 pode ter
+                # reformatado o texto em várias linhas com hífen (ex.:
+                # "Apro-\nvação"), que senão não bateria mais com o
+                # gatilho "aprovação"
+                texto = _norm(valor).replace("-", "").replace(" ", "")
+                if any(texto.startswith(_norm(g).replace(" ", "")) for g in GATILHOS_CONTEUDO_PROTEGIDO):
                     return True
     return False
 

@@ -39,27 +39,50 @@ def _remover_prefixo_case_insensitive(texto, prefixo):
 # altura de linha (None = não mexe), largura de coluna (None = não mexe).
 # Lista extraída fielmente do VBA original — específica de projeto, então
 # é normal precisar adicionar/editar linhas aqui conforme o projeto mudar.
+# Cada regra: (texto original exato, texto formatado com quebras de
+# linha, altura, largura, coluna_minima). coluna_minima=None = vale em
+# qualquer coluna (rótulo normal, coluna A); coluna_minima=N = só vale
+# a partir dessa coluna (cabeçalho de segmento — Escolaridade e
+# Religiões só devem quebrar/ganhar altura 45 a partir da coluna C,
+# nunca quando o mesmo texto aparecer como rótulo de linha comum).
 REGRAS_CODIGO_04_EXATAS = [
-    ("Ensino Funda- mental", "Ensino\nFunda-\nMental", 45, 15),
-    ("Aluno em domicílio (Educação Pública)", " Aluno em domicílio \n(Educação Pública)", 35, 15),
-    ("Uso recente do Sistema de Saúde Pública", "Uso recente do Sistema \nde Saúde Pública", 35, 15),
+    # ---- Não restritas a coluna (rótulos de linha, coluna A) ----
+    ("Aluno em domicílio (Educação Pública)", " Aluno em domicílio \n(Educação Pública)", 35, 15, None),
+    ("Uso recente do Sistema de Saúde Pública", "Uso recente do Sistema \nde Saúde Pública", 35, 15, None),
     ("Participação em Tratamento Contínuo da Prefeitura",
-     " Participação em Tratamento \nContínuo da Prefeitura ", 35, 15),
+     " Participação em Tratamento \nContínuo da Prefeitura ", 35, 15, None),
     ("Benefício da Cidade recebido por alguém no domicílio",
-     "Benefício da Cidade recebido \n por alguém no domicílio", 35, 15),
+     "Benefício da Cidade recebido \n por alguém no domicílio", 35, 15, None),
     ("Renda Média Mensal Domiciliar (em Salário Minímo)",
-     " Renda Média \n Mensal Domiciliar\n(em Salário Minímo)", 60, 15),
-    ("Ensino Médio", "Ensino\nMédio", 45, 15),
-    ("Ensino Superior", "Ensino\nSuperior", 45, 15),
-    ("Católica Total", "Católica\nTotal", 45, 15),
-    ("Católica de Batismo", "Católica de\nBatismo", 45, 15),
-    ("Católica Praticante", "Católica\nPraticante", 45, 15),
-    ("Evangélica Total", "Evangé-\nlica Total", 45, 15),
-    ("Pente- costal", "Pente-\ncostal", 45, 15),
-    (" Católica de Batismo", " Católica de\nBatismo", None, None),
-    ("Espírita/Kardecista", "Espírita/\nKardecista", None, None),
-    ("Afro-Brasileiras", "Afro-\nBrasileiras", None, None),
-    ("Evangélicas de Missão", "Evangé-\nlicas de\nMissão", None, None),
+     " Renda Média \n Mensal Domiciliar\n(em Salário Minímo)", 60, 15, None),
+
+    # ---- Escolaridade — altura 45, a partir da coluna C ----
+    ("Ensino Fundamental", "Ensino\nFunda-\nmental", 45, 15, 3),
+    ("Ensino Funda- mental", "Ensino\nFunda-\nmental", 45, 15, 3),
+    ("Ensino Médio", "Ensino\nMédio", 45, 15, 3),
+    ("Ensino Superior", "Ensino\nSuperior", 45, 15, 3),
+
+    # ---- Religiões — altura 45, a partir da coluna C ----
+    ("Católica Total", "Católica\nTotal", 45, 15, 3),
+    ("Católica de Batismo", "Católica de\nBatismo", 45, 15, 3),
+    (" Católica de Batismo", " Católica de\nBatismo", 45, 15, 3),
+    ("Católica Praticante", "Católica\nPraticante", 45, 15, 3),
+    ("Evangélica Total", "Evangé-\nlica\nTotal", 45, 15, 3),
+    ("Evangélicas de Missão", "Evangé-\nlicas de\nMissão", 45, 15, 3),
+    ("Pente- costal", "Pente-\ncostal", 45, 15, 3),
+    ("Pentecostal", "Pente-\ncostal", 45, 15, 3),
+    ("Espírita/Kardecista", "Espírita/\nKarde-\ncista", 45, 15, 3),
+    ("Afro-Brasileiras", "Afro-\nBrasi-\nleiras", 45, 15, 3),
+    ("Testemunha de Jeová", "Teste-\nmunha\nde Jeová", 45, 15, 3),
+    ("Não sabe", "Não\nsabe", 45, 15, 3),
+    ("Outras religiões", "Outras\nreligiões", 45, 15, 3),
+
+    # ---- Voto no 2º turno em 2022 — altura 30, a partir da coluna C ----
+    ("Jair Bolsonaro", "Jair\nBolsonaro", 30, 15, 3),
+
+    # ---- Avaliação — altura 30, a partir da coluna C ----
+    ("Aprovação", "Apro-\nvação", 30, 15, 3),
+    ("Reprovação", "Repro-\nvação", 30, 15, 3),
 ]
 
 # Regras de "Avaliação do Governo X": coluna 1 mantém o texto original
@@ -94,7 +117,7 @@ def aplicar_codigo_04(ws):
     VBA original.
     """
     alterados = 0
-    centralizado = Alignment(horizontal="center", vertical="center")
+    centralizado = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     for r in range(1, ws.max_row + 1):
         for c in range(1, ws.max_column + 1):
@@ -109,7 +132,46 @@ def aplicar_codigo_04(ws):
                     for rng in ws.merged_cells.ranges
                 )
                 if not ja_mesclada:
-                    ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c + 1)
+                    # O grupo pode se espalhar por MAIS de 2 colunas (ex.:
+                    # "Denominações Católicas" cobrindo 3 subcolunas —
+                    # Total/Batismo/Praticante — contra só 2 de
+                    # "Denominações Evangélicas") — sempre mesclar com
+                    # "a célula vizinha" (largura fixa de 2) deixava a
+                    # 3ª coluna de fora, com o mesmo texto repetido numa
+                    # célula separada, sem mesclar. Acha até onde a
+                    # repetição do mesmo texto vai antes de mesclar —
+                    # usando o valor EFETIVO de cada coluna (se ela já
+                    # for filha de uma mesclagem parcial pré-existente,
+                    # `.value` sozinho devolve None; sem "enxergar
+                    # através" dessa mesclagem, a detecção parava cedo
+                    # demais e a mesclagem saía incompleta mesmo assim).
+                    def _valor_efetivo(col):
+                        v = ws.cell(row=r, column=col).value
+                        if v is not None:
+                            return v
+                        for rng in ws.merged_cells.ranges:
+                            if rng.min_row <= r <= rng.max_row and rng.min_col <= col <= rng.max_col:
+                                return ws.cell(row=rng.min_row, column=rng.min_col).value
+                        return None
+
+                    c_fim = c
+                    while c_fim + 1 <= ws.max_column and _valor_efetivo(c_fim + 1) == texto:
+                        c_fim += 1
+                    # Desfaz qualquer mesclagem que já exista dentro desse
+                    # intervalo antes de criar a nova — evita sobreposição
+                    # inválida (célula pertencendo a duas mesclagens ao
+                    # mesmo tempo), que o Excel descarta silenciosamente
+                    # ao abrir o arquivo, deixando a mesclagem pela
+                    # metade — foi exatamente essa a causa da mesclagem
+                    # não estar acontecendo.
+                    for rng in list(ws.merged_cells.ranges):
+                        if rng.min_row <= r <= rng.max_row and not (rng.max_col < c or rng.min_col > c_fim):
+                            try:
+                                ws.unmerge_cells(str(rng))
+                            except KeyError:
+                                ws.merged_cells.ranges.discard(rng)
+                    ws.cell(row=r, column=c, value=texto)
+                    ws.merge_cells(start_row=r, start_column=c, end_row=r, end_column=c_fim)
                 # aplica a formatação sempre, mesmo quando a célula já veio
                 # mesclada de fábrica (o VBA original só formatava quando
                 # TAMBÉM precisava mesclar — em arquivos que já chegam
@@ -120,8 +182,8 @@ def aplicar_codigo_04(ws):
                 continue
 
             casou = False
-            for original, formatado, altura, largura in REGRAS_CODIGO_04_EXATAS:
-                if texto == original:
+            for original, formatado, altura, largura, coluna_minima in REGRAS_CODIGO_04_EXATAS:
+                if texto == original and (coluna_minima is None or c >= coluna_minima):
                     cel.value = formatado
                     cel.alignment = centralizado
                     if altura is not None:
@@ -492,6 +554,57 @@ TERMOS_EXCLUSAO_CODIGO_03 = [
     "Maricá já está crescendo de forma organizada",
     "Maricá está estagnada",
     "Maricá está regredindo",
+    "Candidato que seja de Teresópolis",
+    "Candidato que não seja de Teresópolis, mas que tem histórico de realizações na cidade",
+    "Não lembra",
+    "Conhece muito",
+    "Conhece de nome",
+    "Conhece pela foto",
+    "Nunca viu antes",
+    "Conhece muito",
+    "Conhece de nome",
+    "Conhece pela foto",
+    "Nunca ouviu falar",
+    "Conhece muito",
+    "Conhece de nome",
+    "Conhece pela foto",
+    "Conhece por vídeo",
+    "Nunca ouviu falar",
+    "É preparada para exercer o cargo de deputada estadual",
+    "Não é preparada para exercer o cargo de deputado estadual",
+    "É conhecedora de Teresópolis e das prioridades das pessoas",
+    "Não conhece a cidade e o que as pessoas precisam",
+    "Tem influência política e pode trazer benefícios para a cidade",
+    "Não tem influência política e não pode trazer benefícios para a cidade",
+    "Tem vontade de trazer melhorias para Teresópolis",
+    "Não tem vontade de trazer melhorias para Teresópolis",
+    "Não acompanha",
+    "Ótima",
+    "Ótimo",
+    "Bom",
+    "Regular",
+    "Ruim",
+    "Péssimo",
+    "Não sabe",
+    "É preparado para exercer o cargo de deputado federal",
+    "Não é preparado para exercer o cargo de deputado federal?",
+    "Não é preparado para exercer o cargo de deputado federal",
+    "É conhecedor de Duque de Caxias e das prioridades das pessoas",
+    "Não conhece a cidade e o que as pessoas precisam",
+    "Tem influência política e pode trazer benefícios para a cidade",
+    "Não tem influência política e não pode trazer benefícios para a cidade",
+    "Tem vontade de trazer melhorias para Duque de Caxias",
+    "Não tem vontade de trazer melhorias para Duque de Caxias",
+    "Depende do candidato",
+    "É preparado para exercer o cargo de deputado federal",
+    "Não é preparado para exercer o cargo de deputado federal?",
+    "Não é preparado para exercer o cargo de deputado federal",
+    "Nunca vi antes",
+    "Não lembro o nome",
+    "Não lembra o nome",
+    "Não sei/Não lembro",
+    "Votei Nulo ou Em branco",
+    "Não fui votar",
 ]
 
 
@@ -710,27 +823,48 @@ def _com_horizontal_vertical(alinhamento_atual, horizontal, vertical):
 # deve ser alterado.
 _GATILHOS_ALTURA_FIXA = (
     (("masculino", "feminino"), 30, None),
-    (("ensino",), 45, None),
-    (("aprovação", "regular", "reprovação"), 30, 3),
+    (("ensino",), 45, 3),
+    (("regular",), 30, 3),
+    (("agnóstico", "ateu", "judeu", "orientais"), 45, 3),
+    # Gatilhos pelo texto JÁ REFORMATADO pelo código 04 (que roda antes
+    # — por isso os prefixos aqui já batem com a versão com quebra de
+    # linha/hífen, ex.: "Evangé-\nlica\nTotal" começa com "evangé-").
+    # Sem isso, o código 09 (que ativa "Quebrar Texto Automaticamente"
+    # em tudo) recalculava a altura por estimativa de caracteres pra
+    # qualquer termo que não fosse um gatilho aqui, sobrescrevendo a
+    # altura fixa que o código 04 já tinha aplicado.
+    (
+        (
+            "evangé-", "católica", "pente-", "espírita/", "afro-",
+            "teste-", "não\nsabe", "outras\nreligiões",
+        ),
+        45, 3,
+    ),
+    (("apro-", "repro-", "jair"), 30, 3),
 )
 
 
-def _altura_fixa_para_linha(ws, r):
+def _celulas_gatilho_altura_fixa(ws, r):
     """
     Se a linha tiver algum gatilho de altura fixa (ver
-    `_GATILHOS_ALTURA_FIXA`), retorna a altura correspondente — essas
-    linhas não passam pela estimativa normal do código 09. Senão,
-    retorna None.
+    `_GATILHOS_ALTURA_FIXA`), retorna (altura, lista de colunas que
+    bateram o gatilho) — essas colunas precisam de "Quebrar Texto
+    Automaticamente" ativado, mesmo não tendo o texto reformatado (isso
+    é feito só pelo código 04; aqui só a altura é fixa). Se não bater
+    nenhum gatilho, retorna (None, []).
     """
     for gatilhos, altura, coluna_minima in _GATILHOS_ALTURA_FIXA:
         col_inicio = coluna_minima or 1
+        colunas_batidas = []
         for c in range(col_inicio, ws.max_column + 1):
             valor = ws.cell(row=r, column=c).value
             if isinstance(valor, str):
                 texto = valor.strip().lower()
                 if any(texto.startswith(gatilho) for gatilho in gatilhos):
-                    return altura
-    return None
+                    colunas_batidas.append(c)
+        if colunas_batidas:
+            return altura, colunas_batidas
+    return None, []
 
 
 def aplicar_codigo_09(ws):
@@ -746,12 +880,17 @@ def aplicar_codigo_09(ws):
     Exceção: linhas com algum gatilho de `_GATILHOS_ALTURA_FIXA`
     (subcategoria de Sexo, Escolaridade, ou segmento de avaliação)
     sempre ficam com a altura fixa correspondente, em vez da
-    estimativa — um valor pré-definido, não calculado.
+    estimativa — um valor pré-definido, não calculado. A(s) célula(s)
+    que bateram o gatilho também ganham "Quebrar Texto Automaticamente"
+    ativado.
     """
     alterados = 0
     for r in range(1, ws.max_row + 1):
-        altura_fixa = _altura_fixa_para_linha(ws, r)
+        altura_fixa, colunas_batidas = _celulas_gatilho_altura_fixa(ws, r)
         if altura_fixa is not None:
+            for c in colunas_batidas:
+                cel = ws.cell(row=r, column=c)
+                cel.alignment = _com_wrap_text(cel.alignment, True)
             if ws.row_dimensions[r].height != float(altura_fixa):
                 ws.row_dimensions[r].height = float(altura_fixa)
                 alterados += 1

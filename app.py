@@ -15,6 +15,7 @@ from analises.total_automatico import modulo_total_automatico
 from analises.codigos_individuais import modulo_codigos_individuais
 from analises.exclusoes import modulo_exclusoes
 from analises.gerador_amostra import modulo_gerador_amostra
+from analises.banco_amostras_ui import modulo_banco_amostras
 from analises.ponderacao import modulo_ponderacao
 from analises.divisor_tabelas import modulo_divisor_tabelas
 from analises.padronizacao_titulos import modulo_padronizacao_titulos
@@ -276,6 +277,7 @@ def main():
             "Total Automático",
             "Códigos Individuais",
             "Gerador de Amostra",
+            "Banco de Amostras",
             "Ponderação",
             "Divisor de Tabelas de Regioes",
             "Padronização de Títulos",
@@ -313,6 +315,10 @@ def main():
 
     if analise == "Gerador de Amostra":
         modulo_gerador_amostra()
+        return
+
+    if analise == "Banco de Amostras":
+        modulo_banco_amostras()
         return
 
     if analise == "Ponderação":

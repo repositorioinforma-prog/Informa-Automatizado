@@ -118,9 +118,10 @@ def aplicar_codigo_04(ws):
     """
     alterados = 0
     centralizado = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    max_col = ws.max_column
 
     for r in range(1, ws.max_row + 1):
-        for c in range(1, ws.max_column + 1):
+        for c in range(1, max_col + 1):
             cel = ws.cell(row=r, column=c)
             texto = cel.value
             if not isinstance(texto, str):
@@ -155,7 +156,7 @@ def aplicar_codigo_04(ws):
                         return None
 
                     c_fim = c
-                    while c_fim + 1 <= ws.max_column and _valor_efetivo(c_fim + 1) == texto:
+                    while c_fim + 1 <= max_col and _valor_efetivo(c_fim + 1) == texto:
                         c_fim += 1
                     # Desfaz qualquer mesclagem que já exista dentro desse
                     # intervalo antes de criar a nova — evita sobreposição
@@ -297,8 +298,9 @@ def aplicar_codigo_01(ws):
 def aplicar_codigo_02(ws):
     """Converte toda borda 'espessa' (thick) da planilha para 'média' (medium)."""
     alterados = 0
+    max_col = ws.max_column
     for r in range(1, ws.max_row + 1):
-        for c in range(1, ws.max_column + 1):
+        for c in range(1, max_col + 1):
             cel = ws.cell(row=r, column=c)
             b = cel.border
             if not any([b.left, b.top, b.right, b.bottom]):
@@ -698,8 +700,9 @@ def aplicar_codigo_06(ws):
     fonte, que é a parte 100% confiável deste código.
     """
     alterados = 0
+    max_col = ws.max_column
     for r in range(1, ws.max_row + 1):
-        for c in range(1, ws.max_column + 1):
+        for c in range(1, max_col + 1):
             cel = ws.cell(row=r, column=c)
             if isinstance(cel.value, str) and "pergunta:" in cel.value.lower():
                 fonte = cel.font
@@ -724,20 +727,29 @@ def aplicar_codigo_08(ws):
     """
     linhas_marcadas = 0
     r = 1
-    while r <= ws.max_row:
+    max_col = ws.max_column
+    # `ws.max_row` recalcula varrendo a planilha inteira toda vez que é
+    # acessado — reconsultar isso a cada volta de um laço `while` que
+    # roda linha por linha é caro em relatórios grandes. Rastreia o
+    # valor manualmente: só aumenta quando `_analisar_linha_codigo_08`
+    # realmente insere a linha de nota (é a única coisa que desloca o
+    # fim do arquivo aqui).
+    max_row_atual = ws.max_row
+    while r <= max_row_atual:
         texto = str(ws.cell(row=r, column=1).value or "").strip().upper()
         if texto in ("BASE", "BASE REDUZIDA"):
-            deslocado = _analisar_linha_codigo_08(ws, r)
+            deslocado = _analisar_linha_codigo_08(ws, r, max_col)
             if deslocado:
                 linhas_marcadas += 1
+                max_row_atual += deslocado
                 r += deslocado  # o resto do arquivo desceu — pula a nota recém-inserida
         r += 1
     return linhas_marcadas
 
 
-def _analisar_linha_codigo_08(ws, linha):
+def _analisar_linha_codigo_08(ws, linha, max_col):
     col_max = 1
-    for c in range(1, ws.max_column + 1):
+    for c in range(1, max_col + 1):
         if ws.cell(row=linha, column=c).value is not None:
             col_max = c
 
@@ -825,7 +837,7 @@ _GATILHOS_ALTURA_FIXA = (
 )
 
 
-def _celulas_gatilho_altura_fixa(ws, r):
+def _celulas_gatilho_altura_fixa(ws, r, max_col):
     """
     Se a linha tiver algum gatilho de altura fixa (ver
     `_GATILHOS_ALTURA_FIXA`), retorna (altura, lista de colunas que
@@ -837,7 +849,7 @@ def _celulas_gatilho_altura_fixa(ws, r):
     for gatilhos, altura, coluna_minima in _GATILHOS_ALTURA_FIXA:
         col_inicio = coluna_minima or 1
         colunas_batidas = []
-        for c in range(col_inicio, ws.max_column + 1):
+        for c in range(col_inicio, max_col + 1):
             valor = ws.cell(row=r, column=c).value
             if isinstance(valor, str):
                 texto = valor.strip().lower()
@@ -866,8 +878,15 @@ def aplicar_codigo_09(ws):
     ativado.
     """
     alterados = 0
-    for r in range(1, ws.max_row + 1):
-        altura_fixa, colunas_batidas = _celulas_gatilho_altura_fixa(ws, r)
+    # `ws.max_column`/`ws.max_row` recalculam varrendo a planilha inteira
+    # toda vez que são acessados — chamar isso dentro de um laço por
+    # linha (e pior ainda, dentro de outro laço por grupo de gatilho)
+    # é a causa principal deste código ficar lento em relatórios
+    # grandes. Calcula uma vez só aqui, fora dos laços.
+    max_col = ws.max_column
+    max_row = ws.max_row
+    for r in range(1, max_row + 1):
+        altura_fixa, colunas_batidas = _celulas_gatilho_altura_fixa(ws, r, max_col)
         if altura_fixa is not None:
             for c in colunas_batidas:
                 cel = ws.cell(row=r, column=c)
@@ -878,7 +897,7 @@ def aplicar_codigo_09(ws):
             continue
 
         maior_estim = None
-        for c in range(1, ws.max_column + 1):
+        for c in range(1, max_col + 1):
             cel = ws.cell(row=r, column=c)
             if not (cel.alignment and cel.alignment.wrap_text):
                 continue
@@ -913,8 +932,9 @@ def aplicar_codigo_11(ws):
     o texto horizontal e verticalmente, e deixa em negrito.
     """
     alterados = 0
+    max_col = ws.max_column
     for r in range(1, ws.max_row + 1):
-        for c in range(1, ws.max_column + 1):
+        for c in range(1, max_col + 1):
             cel = ws.cell(row=r, column=c)
             if not (isinstance(cel.value, str) and "titulo: " in cel.value.lower()):
                 continue
@@ -959,8 +979,9 @@ def aplicar_codigo_12(ws):
     código, diferente do 11, mantém 'Pergunta: ' no texto).
     """
     alterados = 0
+    max_col = ws.max_column
     for r in range(1, ws.max_row + 1):
-        for c in range(1, ws.max_column + 1):
+        for c in range(1, max_col + 1):
             cel = ws.cell(row=r, column=c)
             if not (isinstance(cel.value, str) and "pergunta: " in cel.value.lower()):
                 continue
@@ -1328,8 +1349,9 @@ def aplicar_codigo_10(ws):
     alvo = "Renda Média Mensal Domiciliar (em Salário Mínimo)"
     formatado = "Renda Média Mensal Domiciliar\n(em Salário Mínimo)"
     alterados = 0
+    max_col = ws.max_column
     for r in range(1, ws.max_row + 1):
-        for c in range(1, ws.max_column + 1):
+        for c in range(1, max_col + 1):
             cel = ws.cell(row=r, column=c)
             if cel.value == alvo:
                 cel.value = formatado

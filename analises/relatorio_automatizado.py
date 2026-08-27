@@ -118,8 +118,10 @@ def _aplicar_no_arquivo(funcao, numero, nome, aproximado=False, args=(), no_work
 def _aplicar_sequencia(passos):
     """
     Aplica uma sequência de códigos com feedback visual de progresso —
-    mostra em qual código está rodando no momento (via st.status), pra
-    dar noção de quanto falta em relatórios grandes que demoram mais.
+    mostra em qual código está rodando no momento, e em que posição da
+    sequência (passo X de Y), via st.status. Fica expandido e visível
+    o tempo todo (não é só o spinner padrão do Streamlit) — dá noção
+    de quanto falta em relatórios grandes que demoram mais.
 
     'passos' é uma lista de dicts no formato:
         {"fn": funcao, "numero": "07", "nome": "...", "aproximado": bool,
@@ -127,9 +129,11 @@ def _aplicar_sequencia(passos):
     (mesmos parâmetros de `_aplicar_no_arquivo`, exceto fn/numero/nome
     que são obrigatórios).
     """
+    total = len(passos)
     with st.status("Aplicando códigos...", expanded=True) as status:
-        for p in passos:
-            status.update(label=f"Aplicando código {p['numero']} — {p['nome']}...")
+        for i, p in enumerate(passos, start=1):
+            prefixo = f"({i}/{total}) " if total > 1 else ""
+            status.update(label=f"{prefixo}Aplicando código {p['numero']} — {p['nome']}...")
             _aplicar_no_arquivo(
                 p["fn"], p["numero"], p["nome"],
                 aproximado=p.get("aproximado", False),
@@ -230,13 +234,17 @@ def modulo_relatorio_automatizado():
             "linha fica intacta."
         )
         if st.button("Aplicar e continuar", key="ra_limpeza_continuar"):
-            with st.spinner("Verificando tabelas de Múltipla..."):
+            with st.status("Limpando linhas em branco...", expanded=True) as status:
+                status.update(label="Lendo o arquivo...")
                 wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
                 ws = wb.active
+                status.update(label="Verificando tabelas de Múltipla...")
                 resultado = remover_linha_branca_multiplas_sem_base(ws)
+                status.update(label="Salvando o arquivo...")
                 saida = io.BytesIO()
                 wb.save(saida)
                 st.session_state["ra_wb_bytes"] = saida.getvalue()
+                status.update(label="Concluído!", state="complete")
             _log(
                 f"Limpeza de linha branca (Múltiplas sem base): "
                 f"{resultado['removidas']} linha(s) removida(s), "
@@ -276,15 +284,18 @@ def modulo_relatorio_automatizado():
             return
 
         if aplicar_bm and arquivo_bases is not None:
-            with st.spinner("Lendo e casando as tabelas..."):
+            with st.status("Aplicando base nas tabelas de Múltiplas...", expanded=True) as status:
+                status.update(label="Lendo os dois arquivos...")
                 try:
                     blocos_multiplas = parsear_blocos(io.BytesIO(st.session_state["ra_wb_bytes"]))
                     blocos_bases = parsear_blocos(arquivo_bases)
                 except Exception as e:
+                    status.update(label="Erro ao ler os arquivos.", state="error")
                     st.error(f"Não foi possível ler os arquivos: {e}")
                     return
 
                 if not blocos_multiplas:
+                    status.update(label="Erro: nenhum bloco encontrado.", state="error")
                     st.error(
                         "Não encontrei nenhum bloco 'Titulo:' no relatório "
                         "carregado. Confirme se ele segue o formato padrão "
@@ -292,14 +303,17 @@ def modulo_relatorio_automatizado():
                     )
                     return
                 if not blocos_bases:
+                    status.update(label="Erro: nenhum bloco encontrado.", state="error")
                     st.error(
                         "Não encontrei nenhum bloco 'Titulo:' no relatório "
                         "com base. Confirme se esse é o arquivo certo."
                     )
                     return
 
+                status.update(label="Extraindo os valores de base do arquivo de referência...")
                 base_total, por_par, por_categoria, por_grupo_sem_categoria = extrair_bases(blocos_bases)
                 if base_total is None:
+                    status.update(label="Erro: nenhuma linha 'Base' encontrada.", state="error")
                     st.error(
                         "Não encontrei nenhuma linha 'Base' no relatório "
                         "com base. Confirme se esse é o arquivo certo."
@@ -311,17 +325,20 @@ def modulo_relatorio_automatizado():
                 if blocos_religiao_bases:
                     indice_religiao = extrair_bases(blocos_bases, apenas_blocos=blocos_religiao_bases)[1:]
 
+                status.update(label="Casando os cabeçalhos e calculando os valores de base...")
                 linhas_base = calcular_linhas_base(
                     blocos_multiplas, base_total, por_par, por_categoria, por_grupo_sem_categoria,
                     indice_religiao=indice_religiao,
                 )
 
+                status.update(label="Escrevendo as linhas de Base no relatório...")
                 wb_novo = gerar_workbook_com_base(
                     io.BytesIO(st.session_state["ra_wb_bytes"]), blocos_multiplas, linhas_base
                 )
                 saida = io.BytesIO()
                 wb_novo.save(saida)
                 st.session_state["ra_wb_bytes"] = saida.getvalue()
+                status.update(label="Concluído!", state="complete")
 
             n_ja_tinham = sum(1 for lb in linhas_base if lb.get("ja_tinha_base"))
             n_religiao = sum(1 for lb in linhas_base if lb.get("eh_religiao"))
@@ -456,26 +473,33 @@ def modulo_relatorio_automatizado():
             if not arquivo_legenda:
                 st.warning("Envie o arquivo de legendas antes de continuar.")
                 return
-            with st.spinner("Aplicando legendas..."):
+            with st.status("Aplicando legendas...", expanded=True) as status:
                 try:
+                    status.update(label="Lendo o arquivo de referência das legendas...")
                     dados_referencia = parsear_legenda_por_chave(arquivo_legenda)
                     if not dados_referencia["mapa"]:
+                        status.update(label="Erro: nenhum item reconhecível.", state="error")
                         st.error(
                             "Não encontrei nenhum item de legenda reconhecível "
                             "no arquivo de referência."
                         )
                         return
 
+                    status.update(label="Lendo o relatório...")
                     wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
                     ws = wb.active
+                    status.update(label="Casando os cabeçalhos e inserindo as legendas...")
                     n_inseridas = aplicar_legendas_por_chave(ws, dados_referencia)
 
+                    status.update(label="Salvando o arquivo...")
                     saida = io.BytesIO()
                     wb.save(saida)
                     st.session_state["ra_wb_bytes"] = saida.getvalue()
                 except Exception as e:
+                    status.update(label="Erro ao aplicar as legendas.", state="error")
                     st.error(f"Não foi possível aplicar as legendas: {e}")
                     return
+                status.update(label="Concluído!", state="complete")
 
             if n_inseridas:
                 _log(f"Legendas: {n_inseridas} tabela(s) receberam legenda.")
@@ -550,14 +574,19 @@ def modulo_relatorio_automatizado():
             pular13 = st.button("Pular esta etapa", key="ra_pular_13")
 
         if aplicar13 and arquivo_ref_13 is not None:
-            with st.spinner("Corrigindo cabeçalhos..."):
+            with st.status("Corrigindo cabeçalhos repetidos...", expanded=True) as status:
+                status.update(label="Lendo o arquivo de referência...")
                 blocos_ref = parsear_blocos_cabecalho_referencia(arquivo_ref_13)
+                status.update(label="Lendo o relatório...")
                 wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
                 ws = wb.active
+                status.update(label="Identificando e substituindo os cabeçalhos...")
                 n = aplicar_codigo_13(ws, blocos_ref)
+                status.update(label="Salvando o arquivo...")
                 saida = io.BytesIO()
                 wb.save(saida)
                 st.session_state["ra_wb_bytes"] = saida.getvalue()
+                status.update(label="Concluído!", state="complete")
             _log(f"Código 13 (Corrigir cabeçalhos repetidos): {n} bloco(s) corrigido(s).")
             _ir_para("base_reduzida")
         elif pular13:
@@ -589,13 +618,17 @@ def modulo_relatorio_automatizado():
             "quebras de página do código 07 já estarem no arquivo."
         )
         if st.button("Aplicar e continuar", key="ra_codigo15_continuar"):
-            with st.spinner("Inserindo capas..."):
+            with st.status("Inserindo capas de resultados...", expanded=True) as status:
+                status.update(label="Lendo o relatório...")
                 wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
                 ws = wb.active
+                status.update(label="Localizando onde inserir cada capa...")
                 resultado = aplicar_codigo_15(ws)
+                status.update(label="Salvando o arquivo...")
                 saida = io.BytesIO()
                 wb.save(saida)
                 st.session_state["ra_wb_bytes"] = saida.getvalue()
+                status.update(label="Concluído!", state="complete")
             if resultado["status"] == "ok":
                 _log(
                     f"Código 15 (Capas de resultados): capa do Total na linha "
@@ -691,10 +724,15 @@ def modulo_relatorio_automatizado():
 
         if wkhtmltopdf_disponivel():
             if st.button("📄 Gerar pré-visualização em PDF (relatório inteiro)", key="ra_gerar_pdf_preview"):
-                with st.spinner("Convertendo o relatório inteiro pra PDF — pode levar alguns segundos..."):
+                with st.status(
+                    "Convertendo o relatório inteiro pra PDF — pode levar alguns segundos...",
+                    expanded=True,
+                ) as status:
                     try:
                         st.session_state["ra_pdf_preview_bytes"] = gerar_pdf_preview(st.session_state["ra_wb_bytes"])
+                        status.update(label="Concluído!", state="complete")
                     except RuntimeError as e:
+                        status.update(label="Erro na conversão.", state="error")
                         st.session_state.pop("ra_pdf_preview_bytes", None)
                         st.error(f"Não consegui gerar a pré-visualização em PDF: {e}")
 
@@ -752,11 +790,13 @@ def modulo_relatorio_automatizado():
         )
         if st.button("Dividir tabelas e gerar Índice", key="ra_dividir_e_indexar"):
             with st.status("Dividindo tabelas e gerando o Índice...", expanded=True) as status:
+                status.update(label="Lendo o relatório...")
                 wb_div = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
                 status.update(label="Analisando e dividindo tabelas...")
                 resumo_divisor = processar_divisor_tabelas(wb_div)
                 status.update(label="Gerando o Índice...")
                 n_titulos = aplicar_codigo_16(wb_div.active)
+                status.update(label="Salvando o arquivo...")
                 saida_div = io.BytesIO()
                 wb_div.save(saida_div)
                 status.update(label="Concluído!", state="complete")

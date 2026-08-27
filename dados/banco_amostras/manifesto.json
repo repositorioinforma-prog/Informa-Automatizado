@@ -1,0 +1,22 @@
+{
+  "versao_schema": "1.0.0",
+  "data_criacao_utc": "2026-08-20T14:49:40+00:00",
+  "arquivo": "banco_amostras.sqlite",
+  "tamanho_bytes": 20332544,
+  "sha256": "74a8cdafe9222cad3f89c1342b20a3bf4e6693671622653e22951a317af5ad63",
+  "integrity_check": "ok",
+  "foreign_key_issues": 0,
+  "registros_demograficos": 34487,
+  "variaveis_dicionario": 3400,
+  "territorios_por_nivel": {
+    "bairro": 17576,
+    "brasil": 1,
+    "distrito": 10698,
+    "grande_regiao": 5,
+    "municipio": 5570,
+    "regiao_imediata": 510,
+    "regiao_intermediaria": 133,
+    "subdistrito": 643,
+    "uf": 27
+  }
+}

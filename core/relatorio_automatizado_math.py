@@ -20,6 +20,8 @@ from core.planilha_utils import (
     inserir_linhas_seguro,
     largura_total_mesclagem,
     remover_linhas_seguro,
+    _desfazer_mesclagem_rapido,
+    _remesclar_rapido,
 )
 
 THICK = Side(style="thick")
@@ -588,6 +590,39 @@ TERMOS_EXCLUSAO_CODIGO_03 = [
     "Não sei/Não lembro",
     "Votei Nulo ou Em branco",
     "Não fui votar",
+    # Termos adicionados por Lucas (lote seguinte)
+    "É preparado para exercer o cargo de deputado estadual",
+    "Não é preparado para exercer o cargo de deputado estadual",
+    "Nenhuma prioridade",
+    "Centralizadas nos bairros mais ricos",
+    "Realizadas em todos os bairros",
+    "Centralizadas nos bairros mais pobres",
+    "Conhecia bem",
+    "Conhecia algumas informações",
+    "Apenas tinha ouvido falar",
+    "Nunca tinha ouvido falar",
+    "Aprova",
+    "Desaprova",
+    "Não aprova nem desaprova",
+    "Não conhece o suficiente para opinar",
+    "Geração de empregos para os moradores de Maricá",
+    "Aumento do turismo e da atividade econômica",
+    "Melhoria da infraestrutura da região",
+    "Apenas cerca de 6,6% dos 844 hectares do terreno serem ocupados por edificações",
+    "Preservação ou recuperação ambiental de aproximadamente 81% da propriedade",
+    "O projeto possuir licenças dos órgãos ambientais e urbanísticos competentes",
+    "O projeto será aberto e integrado a cidade, podendo visitar a praia, a lagoa e a restinga",
+    "Nenhuma dessas características",
+    "Construção dentro de uma área de restinga",
+    "Possíveis impactos sobre animais, plantas, lagoas e praias",
+    "Aumento do trânsito e da ocupação urbana",
+    "Possíveis impactos sobre pescadores e comunidades locais",
+    "Participação ou investimento da Prefeitura no empreendimento",
+    "Ser um empreendimento voltado ao turismo e às residências de alto padrão",
+    "Falta de confiança na fiscalização e no cumprimento das medidas ambientais",
+    "Nenhum desses aspectos",
+    "Rejeito todos",
+    "Não rejeito nenhum deles",
 ]
 
 
@@ -926,9 +961,11 @@ def aplicar_codigo_09(ws):
 # =========================================================
 def aplicar_codigo_11(ws):
     """
-    Para toda célula contendo 'Titulo: ': estima a altura (aproximada,
-    igual ao código 09) e aplica na "escada" 30/45/60/75... Remove o
-    prefixo 'Titulo: ' do texto, mantendo só o título em si, centraliza
+    Para toda célula contendo 'Titulo: ' OU 'Título: ' (com acento —
+    algumas exportações do SPSS usam a forma acentuada): estima a
+    altura (aproximada, igual ao código 09) e aplica na "escada"
+    30/45/60/75... Remove o prefixo ('Titulo: ' ou 'Título: ', o que
+    estiver presente) do texto, mantendo só o título em si, centraliza
     o texto horizontal e verticalmente, e deixa em negrito.
     """
     alterados = 0
@@ -936,7 +973,10 @@ def aplicar_codigo_11(ws):
     for r in range(1, ws.max_row + 1):
         for c in range(1, max_col + 1):
             cel = ws.cell(row=r, column=c)
-            if not (isinstance(cel.value, str) and "titulo: " in cel.value.lower()):
+            if not isinstance(cel.value, str):
+                continue
+            valor_lower = cel.value.lower()
+            if "titulo: " not in valor_lower and "título: " not in valor_lower:
                 continue
 
             largura = largura_total_mesclagem(ws, cel)
@@ -946,6 +986,7 @@ def aplicar_codigo_11(ws):
             ws.row_dimensions[r].height = altura_final
 
             texto_novo = _remover_prefixo_case_insensitive(cel.value, "Titulo: ")
+            texto_novo = _remover_prefixo_case_insensitive(texto_novo, "Título: ")
             cel.value = texto_novo
             cel.alignment = _com_horizontal_vertical(cel.alignment, "center", "center")
 
@@ -1224,30 +1265,40 @@ def aplicar_codigo_07(ws):
     esteja logo depois de um bloco "Pergunta"/"*" (esse já ganhou sua
     própria quebra ali do lado, então outra aqui seria redundante),
     insere uma quebra de página no meio dele — no máximo uma por trecho,
-    não uma a cada 4 linhas dentro do mesmo vão vazio longo. Processa de
-    baixo para cima, como o original, para as inserções/remoções não
-    bagunçarem as linhas ainda não visitadas.
+    não uma a cada 4 linhas dentro do mesmo vão vazio longo.
+
+    OTIMIZAÇÃO: a versão anterior processava de baixo pra cima chamando
+    `inserir_linhas_seguro`/`remover_linhas_seguro` uma vez POR
+    "Pergunta" encontrada — cada chamada custa O(tamanho da planilha)
+    porque é isso que `ws.insert_rows()`/`ws.delete_rows()` do openpyxl
+    custam por baixo (percorrem TODAS as células pra deslocar, não só a
+    região afetada), então N "Perguntas" custavam O(N × tamanho da
+    planilha) no total — em relatórios com muitas tabelas, esse era o
+    gargalo conhecido do código 07. Esta versão faz uma única LEITURA
+    (sem mutar nada) pra decidir TODAS as inserções/remoções de uma vez,
+    calcula o deslocamento acumulado de cada linha com um vetor de
+    diferenças (soma prefixada, O(tamanho da planilha) no total, não por
+    operação) e move célula, mesclagem, altura de linha e quebra de
+    página numa única passada. Mesmo resultado final, só que O(tamanho
+    da planilha) no total em vez de O(nº de Perguntas × tamanho da
+    planilha).
+
+    A leitura pura funciona porque cada "Pergunta" só edita linhas
+    estritamente abaixo dela mesma, numa vizinhança curta (até a faixa
+    de 4 linhas) — essa faixa nunca se sobrepõe ao trecho que OUTRA
+    "Pergunta" lê como "vão logo abaixo", porque sempre há conteúdo de
+    tabela de verdade separando um bloco do próximo. Processar de baixo
+    pra cima mutando OU ler tudo de uma vez de cima pra baixo sem mutar
+    dão exatamente as mesmas decisões.
     """
     from openpyxl.worksheet.pagebreak import Break
-
-    def _adicionar_quebra_sem_duplicar(linha_id):
-        """Só adiciona a quebra se ainda não existir uma nesse id — evita
-        duplicar se a função rodar mais de uma vez sobre o mesmo arquivo
-        (ex.: reaplicação acidental do mesmo código)."""
-        if not any(b.id == linha_id for b in ws.row_breaks.brk):
-            ws.row_breaks.append(Break(id=linha_id))
-            return True
-        return False
 
     # Fixa a impressão em escala 100% (modo "Ajustar a: 100% do tamanho
     # normal", não o modo "Ajustar a N página(s) de largura") — o Excel
     # trata os dois como mutuamente exclusivos via pageSetUpPr.fitToPage.
     # Com fitToPage=False + scale=100, o Excel usa a paginação natural da
     # planilha (incluindo as quebras manuais inseridas abaixo) sem
-    # recalcular nada pra "caber" num número de páginas — mais previsível
-    # do que o modo "ajustar largura" que usávamos antes (que também
-    # evitava o bug de quebra manual sendo ignorada, mas por um caminho
-    # mais indireto).
+    # recalcular nada pra "caber" num número de páginas.
     ws.sheet_properties.pageSetUpPr.fitToPage = False
     ws.page_setup.fitToWidth = None
     ws.page_setup.fitToHeight = None
@@ -1257,88 +1308,180 @@ def aplicar_codigo_07(ws):
         texto = str(valor) if valor is not None else ""
         return bool(texto) and ("pergunta" in texto.lower() or "*" in texto)
 
-    quebras_adicionadas = 0
-    linhas_inseridas = 0
+    max_row_original = ws.max_row
+    if max_row_original < 1:
+        return 0, 0
 
-    ultima_linha_original = ws.max_row  # antes de qualquer inserção/remoção nesta função
+    # ---- FASE 1: planejamento — uma leitura só, sem mutar nada -------
+    valores_col_a = [None] * (max_row_original + 2)
+    for r in range(1, max_row_original + 1):
+        valores_col_a[r] = ws.cell(row=r, column=1).value
 
-    r = ws.max_row
-    while r >= 1:
-        cel = ws.cell(row=r, column=1)
+    operacoes = []  # (tipo, posicao_original, quantidade) — tipo: "inserir"/"remover"
+    quebras_planejadas = []  # ("gatilho", linha_do_gatilho) | ("livre", posicao_original)
 
-        if _e_gatilho(cel.value):
-            # Conta quantas linhas já vazias existem logo abaixo, pra
-            # normalizar o vão pra exatamente 4 (em vez de sempre somar
-            # +3 por cima do que já existe, o que gerava vãos de tamanho
-            # variável e às vezes até uma quebra automática extra do
-            # próprio Excel no meio de um vão maior que uma página).
+    r = 1
+    while r <= max_row_original:
+        valor = valores_col_a[r]
+        if _e_gatilho(valor):
             gap_existente = 0
             rr = r + 1
-            while rr <= ws.max_row and ws.cell(row=rr, column=1).value is None:
+            while rr <= max_row_original and valores_col_a[rr] is None:
                 gap_existente += 1
                 rr += 1
 
             if gap_existente < 4:
-                faltam = 4 - gap_existente
-                inserir_linhas_seguro(ws, r + 1, faltam)
-                linhas_inseridas += faltam
+                operacoes.append(("inserir", r + 1, 4 - gap_existente))
             elif gap_existente > 4:
-                excesso = gap_existente - 4
-                remover_linhas_seguro(ws, r + 5, excesso)
+                operacoes.append(("remover", r + 5, gap_existente - 4))
 
-            # Só adiciona a quebra se sobrar conteúdo real depois dela —
-            # quando a "Pergunta" já é a última coisa do arquivo, o
-            # Excel usa a tag <dimension> (calculada a partir das
-            # células com valor, não da altura de linha) pra saber até
-            # onde a planilha "existe de verdade": uma quebra apontando
-            # pra além disso fica pendurada e é descartada
-            # silenciosamente ao reabrir o arquivo. Nesse caso a quebra
-            # também não serviria pra nada mesmo — não há mais conteúdo
-            # pra paginar depois dela.
-            if r < ultima_linha_original:
-                if _adicionar_quebra_sem_duplicar(r + 2):  # quebra no meio das 4 (depois da 2ª)
-                    quebras_adicionadas += 1
-            r -= 1
+            if r < max_row_original:
+                # Quebra "no meio das 4, depois da 2ª" — guarda a linha do
+                # GATILHO (não r+2 direto): quando o gap precisava de
+                # inserção, r+2 pode cair numa linha recém-criada que não
+                # existia na numeração original, então a posição final tem
+                # que ser calculada a partir de onde o gatilho mesmo vai
+                # parar (`_nova_posicao(r) + 2`), não remapeada como se
+                # fosse uma linha original comum.
+                quebras_planejadas.append(("gatilho", r))
+
+            r = rr
             continue
 
-        if cel.value is None:
-            # Acha o trecho contínuo de linhas vazias inteiro (varrendo
-            # pra cima) antes de decidir se ele merece uma quebra — em
-            # vez de contar de 4 em 4 e potencialmente disparar várias
-            # vezes dentro do mesmo vão vazio longo.
-            fim_trecho = r
+        if valor is None:
             inicio_trecho = r
-            rr = r - 1
-            while rr >= 1 and ws.cell(row=rr, column=1).value is None:
-                inicio_trecho = rr
-                rr -= 1
-
+            rr = r
+            while rr <= max_row_original and valores_col_a[rr] is None:
+                rr += 1
+            fim_trecho = rr - 1
             tamanho_trecho = fim_trecho - inicio_trecho + 1
-            # A linha logo depois do trecho (rumo ao topo do arquivo) —
-            # se for um gatilho de Pergunta/*, esse vão vazio é só o
-            # respiro que o código já inseriu ao lado dele, e a quebra
-            # daquele bloco já resolve a paginação ali; não duplica.
-            logo_apos_pergunta = rr >= 1 and _e_gatilho(ws.cell(row=rr, column=1).value)
+            logo_apos_pergunta = inicio_trecho > 1 and _e_gatilho(valores_col_a[inicio_trecho - 1])
 
             if tamanho_trecho >= 4 and not logo_apos_pergunta:
                 meio = (inicio_trecho + fim_trecho) // 2
                 if meio - 1 >= 1:
-                    if _adicionar_quebra_sem_duplicar(meio - 1):
-                        quebras_adicionadas += 1
+                    # Trecho vazio livre, sem inserção/remoção nenhuma
+                    # dentro dele — a posição em si já é uma linha
+                    # original de verdade, remapeia direto.
+                    quebras_planejadas.append(("livre", meio - 1))
 
-            r = inicio_trecho - 1
+            r = fim_trecho + 1
             continue
 
-        r -= 1
+        r += 1
 
-    # O Excel espera a lista de quebras em ordem CRESCENTE de linha — como
-    # este código varre o arquivo de baixo pra cima, elas são adicionadas
-    # em ordem decrescente, e o Excel parece descartar a lista inteira
-    # silenciosamente (sem erro, sem quebra nenhuma aparecendo como
-    # manual) quando ela não está ordenada. Reordena antes de devolver.
+    if not operacoes and not quebras_planejadas:
+        return 0, 0
+
+    # ---- FASE 2: vetor de diferenças -> deslocamento acumulado -------
+    delta = [0] * (max_row_original + 3)
+    linha_removida = [False] * (max_row_original + 2)
+    for tipo, pos, qtd in operacoes:
+        if tipo == "inserir":
+            delta[pos] += qtd
+        else:
+            for rr in range(pos, pos + qtd):
+                linha_removida[rr] = True
+            delta[pos + qtd] -= qtd
+
+    deslocamento_acumulado = [0] * (max_row_original + 2)
+    acumulado = 0
+    for r in range(1, max_row_original + 1):
+        acumulado += delta[r]
+        deslocamento_acumulado[r] = acumulado
+
+    def _nova_posicao(r_original):
+        return r_original + deslocamento_acumulado[r_original]
+
+    # ---- FASE 3: aplica tudo numa passada só --------------------------
+    linhas_inseridas_total = sum(qtd for tipo, _pos, qtd in operacoes if tipo == "inserir")
+    linhas_removidas_total = sum(qtd for tipo, _pos, qtd in operacoes if tipo == "remover")
+
+    # Mesclagens: desfaz e recria na posição final — uma vez por
+    # mesclagem existente, não uma vez por operação de inserção/remoção.
+    faixas_a_remesclar = []
+    for rng in list(ws.merged_cells.ranges):
+        dentro_de_removida = (
+            rng.min_row <= max_row_original and linha_removida[rng.min_row]
+        ) or (
+            rng.max_row <= max_row_original and linha_removida[rng.max_row]
+        )
+        if not dentro_de_removida:
+            novo_min = rng.min_row if rng.min_row > max_row_original else _nova_posicao(rng.min_row)
+            novo_max = rng.max_row if rng.max_row > max_row_original else _nova_posicao(rng.max_row)
+            faixas_a_remesclar.append((novo_min, rng.min_col, novo_max, rng.max_col))
+        _desfazer_mesclagem_rapido(ws, rng)
+    for min_row, min_col, max_row_faixa, max_col in faixas_a_remesclar:
+        _remesclar_rapido(ws, min_row=min_row, min_col=min_col, max_row=max_row_faixa, max_col=max_col)
+
+    # Alturas de linha customizadas.
+    alturas_a_mover = []
+    for idx in list(ws.row_dimensions.keys()):
+        dim = ws.row_dimensions.pop(idx)
+        if idx <= max_row_original:
+            if not linha_removida[idx]:
+                alturas_a_mover.append((_nova_posicao(idx), dim))
+        else:
+            alturas_a_mover.append((idx + linhas_inseridas_total - linhas_removidas_total, dim))
+    for nova_idx, dim in alturas_a_mover:
+        dim.index = nova_idx
+        ws.row_dimensions[nova_idx] = dim
+
+    # Células: move valor + estilo de cada uma pra posição final, numa
+    # única passada sobre o dicionário interno do openpyxl — é
+    # exatamente o que `ws.insert_rows()`/`ws.delete_rows()` fazem por
+    # baixo dos panos a cada chamada, só que aqui é feito uma vez só
+    # para TODAS as operações combinadas.
+    novas_cells = {}
+    for (r, c), cel in ws._cells.items():
+        if r > max_row_original:
+            novas_cells[(r + linhas_inseridas_total - linhas_removidas_total, c)] = cel
+            cel.row = r + linhas_inseridas_total - linhas_removidas_total
+            continue
+        if linha_removida[r]:
+            continue
+        nr = _nova_posicao(r)
+        cel.row = nr
+        novas_cells[(nr, c)] = cel
+    ws._cells = novas_cells
+
+    # Quebras de página já existentes: remapeia ou descarta as que
+    # caíam dentro de uma faixa removida.
+    quebras_remapeadas = []
+    for quebra in ws.row_breaks.brk:
+        if quebra.id <= max_row_original:
+            if linha_removida[quebra.id]:
+                continue
+            quebra.id = _nova_posicao(quebra.id)
+        else:
+            quebra.id += linhas_inseridas_total - linhas_removidas_total
+        quebras_remapeadas.append(quebra)
+    ws.row_breaks.brk = quebras_remapeadas
+
+    # Adiciona as quebras novas planejadas na Fase 1, já na posição final.
+    quebras_adicionadas = 0
+    ids_existentes = {b.id for b in ws.row_breaks.brk}
+    for tipo_quebra, valor in quebras_planejadas:
+        if tipo_quebra == "gatilho":
+            # `valor` é a linha do gatilho — a posição final da quebra é
+            # sempre 2 linhas depois de onde o próprio gatilho parar,
+            # independente de o vão abaixo ter sido criado por inserção
+            # (linha nova, sem posição original) ou já existir.
+            pos_final = _nova_posicao(valor) + 2
+        else:  # "livre" — trecho vazio já existente, remapeia direto
+            if linha_removida[valor]:
+                continue
+            pos_final = _nova_posicao(valor)
+        if pos_final not in ids_existentes:
+            ws.row_breaks.append(Break(id=pos_final))
+            ids_existentes.add(pos_final)
+            quebras_adicionadas += 1
+
+    # O Excel espera a lista de quebras em ordem CRESCENTE de linha, ou
+    # descarta a lista inteira silenciosamente.
     ws.row_breaks.brk = sorted(ws.row_breaks.brk, key=lambda b: b.id)
 
-    return quebras_adicionadas, linhas_inseridas
+    return quebras_adicionadas, linhas_inseridas_total
 
 
 # =========================================================

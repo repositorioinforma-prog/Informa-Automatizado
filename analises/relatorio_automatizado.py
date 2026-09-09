@@ -15,6 +15,18 @@ ESTADO ATUAL: TODOS os 16 códigos estão portados e ligados de verdade —
 core/legendas_math.py).
 
 Não depende do `dados` carregado no início do app: tem upload próprio.
+
+MODO SEMIAUTOMÁTICO: checkbox "⚡ Modo semiautomático" faz as etapas que
+são só "clicar em Aplicar" (sem decisão a tomar nem arquivo a importar)
+avançarem sozinhas — limpeza_multiplas, codigo_04, codigo_06_07,
+codigo_08_12, codigo_14 e codigo_15. O assistente continua parando
+normalmente em toda etapa que exige uma escolha real da pessoa: aviso
+(confirmação), upload, base_multiplas (upload/pular), origem (SPSS
+Relatoria/Inovação), novos_termos (termos extras opcionais), base_reduzida
+(limite numérico), etapa_13 (upload/pular) e legendas (upload/pular).
+Cada etapa "pura" continua usando exatamente a mesma lógica de aplicação
+de sempre — o modo automático só troca a condição `if st.button(...)`
+por `if modo_auto or st.button(...)`, sem duplicar código.
 """
 import io
 import os
@@ -188,10 +200,26 @@ def modulo_relatorio_automatizado():
         st.session_state["ra_log"] = []
 
     if st.session_state["ra_step"] != "aviso":
-        if st.button("🔄 Reiniciar do zero", key="ra_reiniciar"):
-            _reiniciar()
+        col_reiniciar, col_auto = st.columns([1, 2])
+        with col_reiniciar:
+            if st.button("🔄 Reiniciar do zero", key="ra_reiniciar"):
+                _reiniciar()
+        with col_auto:
+            st.checkbox(
+                "⚡ Modo semiautomático",
+                key="ra_modo_auto",
+                help=(
+                    "Etapas que são só 'clicar em Aplicar' (sem nenhuma "
+                    "decisão a tomar ou arquivo a importar) avançam "
+                    "sozinhas. O assistente ainda para normalmente em "
+                    "toda etapa que precisa de uma escolha sua (SPSS "
+                    "Relatoria/Inovação, base nas Múltiplas, legendas, "
+                    "cabeçalhos, limite de base reduzida etc.)."
+                ),
+            )
 
     etapa = st.session_state["ra_step"]
+    modo_auto = st.session_state.get("ra_modo_auto", False)
     _mostrar_progresso(etapa)
 
     # ---------------------------------------------------------------
@@ -233,7 +261,9 @@ def modulo_relatorio_automatizado():
             "borda ou cor. Se tiver qualquer conteúdo ou formatação, a "
             "linha fica intacta."
         )
-        if st.button("Aplicar e continuar", key="ra_limpeza_continuar"):
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ra_limpeza_continuar"):
             with st.status("Limpando linhas em branco...", expanded=True) as status:
                 status.update(label="Lendo o arquivo...")
                 wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
@@ -404,7 +434,9 @@ def modulo_relatorio_automatizado():
             "específicos (ex.: Denominações Religiosas, Ensino "
             "Fundamental)."
         )
-        if st.button("Aplicar e continuar", key="ra_codigo04_continuar"):
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo04_continuar"):
             _aplicar_sequencia([
                 {"fn": aplicar_codigo_04, "numero": "04", "nome": "Formatação de rótulos específicos"},
             ])
@@ -437,7 +469,9 @@ def modulo_relatorio_automatizado():
             "linhas + quebras de página manuais depois de cada bloco de "
             "pergunta. Em relatórios grandes pode levar alguns segundos."
         )
-        if st.button("Aplicar e continuar", key="ra_codigo0607_continuar"):
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo0607_continuar"):
             _aplicar_sequencia([
                 {"fn": aplicar_codigo_06, "numero": "06", "nome": "Ajuste DIN 9 na linha de Pergunta"},
                 {"fn": aplicar_codigo_07, "numero": "07", "nome": "Adiciona linhas e quebra de página"},
@@ -484,6 +518,17 @@ def modulo_relatorio_automatizado():
                             "no arquivo de referência."
                         )
                         return
+                    if not dados_referencia["linhas_titulo"]:
+                        status.update(label="Erro: nenhum título reconhecível.", state="error")
+                        st.error(
+                            "Não encontrei nenhuma linha de TÍTULO reconhecível "
+                            "no arquivo de referência (ex.: uma célula com só "
+                            "\"LEGENDA\", \"LEGENDA REGIÕES\" ou \"LEGENDA "
+                            "CAPITAL\"). Sem um título, o programa reconhece os "
+                            "itens mas não consegue montar a legenda — confira "
+                            "a célula do título."
+                        )
+                        return
 
                     status.update(label="Lendo o relatório...")
                     wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
@@ -520,7 +565,9 @@ def modulo_relatorio_automatizado():
             "perguntas e o título da Renda. Cinco códigos em sequência — "
             "pode levar um tempinho em relatórios grandes."
         )
-        if st.button("Aplicar e continuar", key="ra_codigo0812_continuar"):
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo0812_continuar"):
             _aplicar_sequencia([
                 {"fn": aplicar_codigo_08, "numero": "08", "nome": "Base pequena"},
                 {
@@ -598,7 +645,9 @@ def modulo_relatorio_automatizado():
     if etapa == "codigo_14":
         st.subheader("Cabeçalho/rodapé de impressão fixos (código 14)")
         st.caption("Aplica o aviso legal fixo no cabeçalho e o número de página no rodapé.")
-        if st.button("Aplicar e continuar", key="ra_codigo14_continuar"):
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo14_continuar"):
             _aplicar_sequencia([
                 {
                     "fn": aplicar_codigo_14, "numero": "14", "nome": "Cabeçalho/rodapé de impressão fixos",
@@ -617,7 +666,9 @@ def modulo_relatorio_automatizado():
             "logo antes da primeira tabela segmentada. Depende das "
             "quebras de página do código 07 já estarem no arquivo."
         )
-        if st.button("Aplicar e continuar", key="ra_codigo15_continuar"):
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo15_continuar"):
             with st.status("Inserindo capas de resultados...", expanded=True) as status:
                 status.update(label="Lendo o relatório...")
                 wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
@@ -874,7 +925,7 @@ def modulo_relatorio_automatizado():
             st.dataframe(pd.DataFrame(preview_rows_final), use_container_width=True, hide_index=True)
 
             st.caption("Remover termo de todos os títulos do Sumário:")
-            col_a, col_b = st.columns(2)
+            col_a, col_b, col_c = st.columns(3)
             with col_a:
                 if st.button("Remover \"(Estimulada e Única)\"", key="ra_remover_unica"):
                     wb_edit = openpyxl.load_workbook(io.BytesIO(wb_bytes_dividido), rich_text=True)
@@ -892,5 +943,15 @@ def modulo_relatorio_automatizado():
                     wb_edit.save(saida_edit)
                     st.session_state["ra_wb_bytes_dividido"] = saida_edit.getvalue()
                     st.success(f"Termo removido de {n} título(s).")
+                    st.rerun()
+            with col_c:
+                if st.button("Remover ambos", key="ra_remover_ambos"):
+                    wb_edit = openpyxl.load_workbook(io.BytesIO(wb_bytes_dividido), rich_text=True)
+                    n1 = remover_termo_do_sumario(wb_edit, "(Estimulada e Única)")
+                    n2 = remover_termo_do_sumario(wb_edit, "(Estimulada e Múltipla)")
+                    saida_edit = io.BytesIO()
+                    wb_edit.save(saida_edit)
+                    st.session_state["ra_wb_bytes_dividido"] = saida_edit.getvalue()
+                    st.success(f"Termos removidos de {n1 + n2} título(s) ({n1} + {n2}).")
                     st.rerun()
         return

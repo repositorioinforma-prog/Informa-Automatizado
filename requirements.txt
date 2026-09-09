@@ -17,4 +17,5 @@ openpyxl
 pyreadstat
 XlsxWriter
 python-pptx
+rapidfuzz
 setuptools<81

@@ -254,3 +254,7 @@ Aplicativo desenvolvido para apoiar as rotinas de análise de dados do **Institu
 ## Licença
 
 Defina neste espaço a licença aplicável ao projeto e as regras de uso, distribuição e modificação do código.
+
+## Revisor de Syntax SPSS
+
+O menu **Revisor de Syntax SPSS** audita arquivos `.sps` e aceita opcionalmente o banco `.sav` original e um `.sav` processado. A primeira versão verifica estrutura de `RECODE`, regras duplicadas/conflitantes, coerência com `VALUE LABELS`, seções vazias, encoding, referências de `MRSETS`, variáveis inexistentes e categorias reais do banco que seriam perdidas por `ELSE=SYSMIS` ou ficariam sem mapeamento. A análise é conservadora: ela não substitui o motor do IBM SPSS e só interpreta construções reconhecidas com segurança.

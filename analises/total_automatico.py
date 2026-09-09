@@ -6,9 +6,10 @@ menos etapas — pensado pra relatórios "pelo total": limpeza de linha
 branca nas Múltiplas sem base, Base nas Múltiplas (por arquivo ou valor
 manual), SPSS Relatoria/Inovação (01-02), Ordenar tabelas (03), layout
 (sem exclusão por Base reduzida), DIN 9 + linhas/quebras (06-07),
-ajuste de altura de labels/títulos/perguntas (09/11/12) e, por fim, uma
-capa "Resultados pelo total" (com os campos de bairro/cidade e mês/ano
-digitáveis) acima da primeira tabela.
+ajuste de altura de labels/títulos/perguntas (09/11/12), uma capa
+"Resultados pelo total" (com os campos de bairro/cidade e mês/ano
+digitáveis) acima da primeira tabela e, ao final, o Divisor de Tabelas
+(opcional, sem geração de Índice).
 
 Usa prefixo de chave "ta_" no session_state (Total Automático), bem
 diferente de "ra_" (Relatório Automatizado), pra não colidir caso a
@@ -17,6 +18,17 @@ pessoa alterne entre os dois módulos na mesma sessão do navegador.
 Trabalha sempre em cima de UM ÚNICO arquivo, que vai sendo atualizado
 passo a passo conforme a pessoa avança no assistente. Não depende do
 `dados` carregado no início do app: tem upload próprio.
+
+MODO SEMIAUTOMÁTICO: checkbox "⚡ Modo semiautomático" faz as etapas que
+são só "clicar em Aplicar" (sem decisão a tomar nem arquivo a importar)
+avançarem sozinhas — limpeza_multiplas, layout, codigo_06_07 e alturas.
+O assistente continua parando normalmente em toda etapa que exige uma
+escolha real da pessoa: aviso (confirmação), upload, base_multiplas
+(arquivo/valor manual), origem (SPSS Relatoria/Inovação), novos_termos
+(termos extras opcionais) e capa (bairro/cidade + mês/ano, campos
+obrigatórios). Mesmo padrão usado no Relatório Automatizado — troca
+`if st.button(...)` por `if modo_auto or st.button(...)` nas etapas
+puras, sem duplicar lógica.
 """
 import io
 
@@ -32,15 +44,13 @@ from core.base_multiplas_math import (
     bloco_eh_religiao,
 )
 from core.planilha_utils import worksheet_para_html
+from core.divisor_tabelas_math import processar_workbook as processar_divisor_tabelas
 from core.relatorio_automatizado_math import (
     aplicar_codigo_01,
     aplicar_codigo_02,
     aplicar_codigo_03,
     aplicar_codigo_06,
     aplicar_codigo_07,
-    aplicar_codigo_09,
-    aplicar_codigo_11,
-    aplicar_codigo_12,
     TERMOS_EXCLUSAO_CODIGO_03,
 )
 from core.total_automatico_math import (
@@ -50,6 +60,9 @@ from core.total_automatico_math import (
     adicionar_linhas_finais_em_branco,
     encontrar_perguntas_com_base_reduzida,
     detectar_bases_divergentes,
+    aplicar_codigo_09_total,
+    aplicar_codigo_11_total,
+    aplicar_codigo_12_total,
 )
 
 
@@ -144,10 +157,26 @@ def modulo_total_automatico():
         st.session_state["ta_log"] = []
 
     if st.session_state["ta_step"] != "aviso":
-        if st.button("🔄 Reiniciar do zero", key="ta_reiniciar"):
-            _reiniciar()
+        col_reiniciar, col_auto = st.columns([1, 2])
+        with col_reiniciar:
+            if st.button("🔄 Reiniciar do zero", key="ta_reiniciar"):
+                _reiniciar()
+        with col_auto:
+            st.checkbox(
+                "⚡ Modo semiautomático",
+                key="ta_modo_auto",
+                help=(
+                    "Etapas que são só 'clicar em Aplicar' (sem nenhuma "
+                    "decisão a tomar ou arquivo a importar) avançam "
+                    "sozinhas. O assistente ainda para normalmente em "
+                    "toda etapa que precisa de uma escolha sua (SPSS "
+                    "Relatoria/Inovação, base nas Múltiplas, texto da "
+                    "capa etc.)."
+                ),
+            )
 
     etapa = st.session_state["ta_step"]
+    modo_auto = st.session_state.get("ta_modo_auto", False)
     _mostrar_progresso(etapa)
 
     # ---------------------------------------------------------------
@@ -157,7 +186,8 @@ def modulo_total_automatico():
             "pelo total: limpeza de linha branca nas Múltiplas sem base "
             "→ Base nas Múltiplas → SPSS Relatoria/Inovação → Ordenar "
             "tabelas → layout → DIN 9 + quebras → altura de "
-            "labels/títulos/perguntas → capa \"Resultados pelo total\". "
+            "labels/títulos/perguntas → capa \"Resultados pelo total\" → "
+            "Divisor de Tabelas opcional no final. "
             "Sem exclusão por Base reduzida, sem cabeçalhos repetidos, "
             "sem Legendas e sem as Capas de Resultados do código 15 — "
             "aqui a capa é outra, mais simples."
@@ -192,7 +222,9 @@ def modulo_total_automatico():
             "borda ou cor. Se tiver qualquer conteúdo ou formatação, a "
             "linha fica intacta."
         )
-        if st.button("Aplicar e continuar", key="ta_limpeza_continuar"):
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ta_limpeza_continuar"):
             with st.spinner("Verificando tabelas de Múltipla..."):
                 wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ta_wb_bytes"]), rich_text=True)
                 ws = wb.active
@@ -400,7 +432,9 @@ def modulo_total_automatico():
             "passo de altura, não aqui.) Sem exclusão de colunas por "
             "Base reduzida."
         )
-        if st.button("Aplicar e continuar", key="ta_layout_continuar"):
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ta_layout_continuar"):
             _aplicar_sequencia([
                 {"fn": aplicar_layout_total_automatico, "numero": "04 (layout)", "nome": "Layout da planilha"},
             ])
@@ -415,7 +449,9 @@ def modulo_total_automatico():
             "linhas + quebras de página manuais depois de cada bloco de "
             "pergunta. Em relatórios grandes pode levar alguns segundos."
         )
-        if st.button("Aplicar e continuar", key="ta_codigo0607_continuar"):
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ta_codigo0607_continuar"):
             _aplicar_sequencia([
                 {"fn": aplicar_codigo_06, "numero": "06", "nome": "Ajuste DIN 9 na linha de Pergunta"},
                 {"fn": aplicar_codigo_07, "numero": "07", "nome": "Adiciona linhas e quebra de página"},
@@ -430,21 +466,25 @@ def modulo_total_automatico():
             "Ajusta a altura das labels com quebra de linha, remove o "
             "prefixo 'Titulo: ' e deixa os títulos em negrito e "
             "centralizados, e ajusta a altura das linhas de Pergunta. "
+            "Neste fluxo, as alturas são normalizadas em 15 pontos por "
+            "linha visual (15/30/45/60...). "
             "Não marca base pequena (08) nem ajusta o título da Renda "
             "(10) — esses dois ficam de fora deste fluxo."
         )
-        if st.button("Aplicar e continuar", key="ta_alturas_continuar"):
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ta_alturas_continuar"):
             _aplicar_sequencia([
                 {
-                    "fn": aplicar_codigo_09, "numero": "09", "nome": "Ajusta a altura das labels",
+                    "fn": aplicar_codigo_09_total, "numero": "09", "nome": "Ajusta a altura das labels",
                     "aproximado": True,
                 },
                 {
-                    "fn": aplicar_codigo_11, "numero": "11", "nome": "Ajusta a altura dos Títulos",
+                    "fn": aplicar_codigo_11_total, "numero": "11", "nome": "Ajusta a altura dos Títulos",
                     "aproximado": True,
                 },
                 {
-                    "fn": aplicar_codigo_12, "numero": "12", "nome": "Ajuste da altura das Perguntas",
+                    "fn": aplicar_codigo_12_total, "numero": "12", "nome": "Ajuste da altura das Perguntas",
                     "aproximado": True,
                 },
             ])
@@ -548,4 +588,96 @@ def modulo_total_automatico():
                 avisos.append("colunas")
             if avisos:
                 st.caption(f"⚠️ Pré-visualização truncada ({' e '.join(avisos)}) — o arquivo baixado está completo.")
+
+        st.divider()
+        st.subheader("Dividir Tabelas (opcional)")
+        st.caption(
+            "Continua diretamente sobre o arquivo gerado pelo Total Automático, "
+            "sem precisar baixar e reenviar no módulo separado. O divisor analisa "
+            "as tabelas que ultrapassam o limite útil por página e faz os mesmos "
+            "ajustes usados no Relatório Automatizado. Neste fluxo NÃO é gerado Índice."
+        )
+
+        if st.button("Dividir tabelas", key="ta_dividir_tabelas"):
+            with st.status("Dividindo tabelas...", expanded=True) as status:
+                status.update(label="Lendo o relatório...")
+                wb_div = openpyxl.load_workbook(
+                    io.BytesIO(st.session_state["ta_wb_bytes"]), rich_text=True
+                )
+                status.update(label="Analisando e dividindo tabelas...")
+                resumo_divisor = processar_divisor_tabelas(wb_div)
+                # O divisor recalcula a área de impressão com base no
+                # conteúdo real. Reaplica o respiro final do Total
+                # Automático DEPOIS dele para que as duas linhas em branco
+                # e o limite azul final também existam no arquivo dividido.
+                adicionar_linhas_finais_em_branco(wb_div.active)
+                status.update(label="Salvando o arquivo...")
+                saida_div = io.BytesIO()
+                wb_div.save(saida_div)
+                status.update(label="Concluído!", state="complete")
+
+            st.session_state["ta_wb_bytes_dividido"] = saida_div.getvalue()
+            st.session_state["ta_resumo_divisor"] = resumo_divisor
+            _log(
+                "Divisor de Tabelas: "
+                f"{resumo_divisor['tables_candidatas']} candidata(s), "
+                f"{resumo_divisor['tables_divididas']} dividida(s), "
+                f"{resumo_divisor['legenda_movida']} legenda(s) movida(s)."
+            )
+            st.success("Divisor de Tabelas concluído. Nenhum Índice foi gerado.")
+
+        resumo_divisor = st.session_state.get("ta_resumo_divisor")
+        wb_bytes_dividido = st.session_state.get("ta_wb_bytes_dividido")
+        if resumo_divisor is not None and wb_bytes_dividido is not None:
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            c1.metric("Abas analisadas", resumo_divisor["sheets_analyzed"])
+            c2.metric("Tabelas candidatas", resumo_divisor["tables_candidatas"])
+            c3.metric("Divididas", resumo_divisor["tables_divididas"])
+            c4.metric("Legenda movida", resumo_divisor["legenda_movida"])
+            c5.metric("Não corrigidas", resumo_divisor["nao_corrigidas"])
+            c6.metric("Partes geradas", resumo_divisor["partes_geradas"])
+
+            if resumo_divisor["nao_corrigidas"]:
+                titulos_nao_corrigidas = [
+                    a["titulo"]
+                    for a in resumo_divisor["acoes"]
+                    if a["acao"] == "nao_corrigida"
+                ]
+                lista_nc = "\n".join(f"- {t}" for t in titulos_nao_corrigidas)
+                st.warning(
+                    "Tabela(s) protegida(s) sem legenda (ou onde nem sem legenda "
+                    "cabe nas linhas úteis) não puderam ser corrigidas automaticamente. "
+                    "Precisam de ajuste manual:\n\n" + lista_nc
+                )
+
+            if resumo_divisor["tables_candidatas"]:
+                rows_divisor = [
+                    {
+                        "Aba": a["table"].sheet,
+                        "Tabela": a["titulo"],
+                        "Ação": {
+                            "dividida": "Dividida em partes",
+                            "legenda_movida": "Legenda movida pra página própria",
+                            "nao_corrigida": "Não corrigida automaticamente",
+                        }.get(a["acao"], a["acao"]),
+                        "Partes": a.get("parts", "-"),
+                    }
+                    for a in resumo_divisor["acoes"]
+                ]
+                st.dataframe(rows_divisor, use_container_width=True, hide_index=True)
+
+            original_name = st.session_state.get("ta_nome_arquivo", "relatorio.xlsx")
+            if "." in original_name:
+                stem, ext = original_name.rsplit(".", 1)
+                output_name_dividido = f"{stem}_tabelas_divididas.{ext}"
+            else:
+                output_name_dividido = original_name + "_tabelas_divididas.xlsx"
+
+            st.download_button(
+                "Baixar relatório com tabelas divididas",
+                data=wb_bytes_dividido,
+                file_name=output_name_dividido,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="ta_download_dividido",
+            )
         return

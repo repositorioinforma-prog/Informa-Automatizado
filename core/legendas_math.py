@@ -535,7 +535,19 @@ def _normalizar_texto_vba(valor):
 
 
 def _eh_titulo_legenda_v2(texto_normalizado):
-    return texto_normalizado in TITULOS_LEGENDA_RECONHECIDOS
+    # Tolera pontuação solta no final (ex.: "LEGENDA:" em vez de
+    # "LEGENDA") — alguns arquivos de referência escrevem o título como
+    # frase ("Legenda:") em vez de rótulo puro. Sem isso, o título não
+    # era reconhecido, o que cascateava num bug silencioso: nenhuma
+    # linha de título -> nenhuma referência de título nos itens ->
+    # `_colar_legenda_filtrada` bailava sem copiar nada, mas o espaço em
+    # branco já tinha sido reservado por quem chama antes dessa
+    # checagem — resultado: linhas em branco aparecem, legenda não.
+    texto_sem_pontuacao_final = texto_normalizado.rstrip(":;.,")
+    return (
+        texto_normalizado in TITULOS_LEGENDA_RECONHECIDOS
+        or texto_sem_pontuacao_final in TITULOS_LEGENDA_RECONHECIDOS
+    )
 
 
 def _resto_representa_faixa(resto):
@@ -951,6 +963,11 @@ def _copiar_linha_legenda(ws_destino, linha_destino, dados_referencia, linha_ref
 
 
 def _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino):
+    """Cola título + itens filtrados na posição indicada. Devolve True se
+    algo foi realmente copiado, False se não achou uma linha de título
+    de referência válida (nesse caso não cola nada — quem chama não
+    deve contar isso como sucesso nem consumir o espaço já reservado
+    como se a legenda tivesse sido inserida de verdade)."""
     mapa = dados_referencia["mapa"]
     max_col = dados_referencia["max_col"]
 
@@ -962,7 +979,7 @@ def _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino):
     if not linha_titulo_ref and dados_referencia["linhas_titulo"]:
         linha_titulo_ref = dados_referencia["linhas_titulo"][0]
     if not linha_titulo_ref:
-        return
+        return False
 
     _copiar_linha_legenda(ws, linha_destino, dados_referencia, linha_titulo_ref, max_col, tipo="titulo")
 
@@ -977,6 +994,8 @@ def _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino):
         for offset, linha_ref in enumerate(range(ini, fim + 1)):
             _copiar_linha_legenda(ws, linha_atual + offset, dados_referencia, linha_ref, max_col, tipo="item")
         linha_atual += (fim - ini + 1)
+
+    return True
 
 
 def _ja_tem_legenda_aqui(ws, linha_destino):
@@ -1179,13 +1198,24 @@ def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
             continue
 
         linha_espaco = linha_pergunta + 1
-        if not _area_vazia_v2(ws, linha_espaco, linha_espaco, max_col):
+        espaco_inserido_por_nos = not _area_vazia_v2(ws, linha_espaco, linha_espaco, max_col)
+        if espaco_inserido_por_nos:
             inserir_linhas_seguro(ws, linha_espaco, 1)
 
         linha_destino = linha_pergunta + 2
         inserir_linhas_seguro(ws, linha_destino, qtd_linhas)
 
-        _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino)
+        colou = _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino)
+        if not colou:
+            # Não achou uma linha de título de referência válida (ex.:
+            # arquivo de legenda com título em formato não reconhecido)
+            # — desfaz tudo que foi reservado aqui em vez de deixar
+            # linhas em branco soltas fingindo que a legenda foi colada.
+            remover_linhas_seguro(ws, linha_destino, qtd_linhas)
+            if espaco_inserido_por_nos:
+                remover_linhas_seguro(ws, linha_espaco, 1)
+            continue
+
         _garantir_duas_linhas_apos_legenda(ws, linha_destino + qtd_linhas - 1)
         inseridas += 1
 

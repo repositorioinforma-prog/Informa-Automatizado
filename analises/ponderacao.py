@@ -100,7 +100,7 @@ def _sugerir_variaveis(dados: pd.DataFrame, meta) -> list[str]:
         if candidato is not None:
             escolhidas.append(candidato)
 
-    return escolhidas[:5]
+    return escolhidas
 
 
 def _nome_arquivo_seguro(texto: str) -> str:
@@ -2057,7 +2057,7 @@ def modulo_ponderacao():
             st.session_state["ponderacao_reaplicar_perfil"] = True
             variaveis_importadas = [
                 v for v in novo_perfil["variaveis"] if v in dados.columns
-            ][:5]
+            ]
             if variaveis_importadas:
                 st.session_state["ponderacao_variaveis"] = variaveis_importadas
             perfil = novo_perfil
@@ -2093,33 +2093,31 @@ def modulo_ponderacao():
     perfil = _perfil_sessao()
     preferencias_perfil = [
         v for v in perfil.get("variaveis", {}) if v in dados.columns
-    ][:5]
+    ]
     preferencias = preferencias_perfil or _sugerir_variaveis(dados, meta)
 
     if "ponderacao_variaveis" in st.session_state:
         selecionadas_validas = [
             v for v in st.session_state["ponderacao_variaveis"] if v in dados.columns
-        ][:5]
+        ]
         if selecionadas_validas != list(st.session_state["ponderacao_variaveis"]):
             st.session_state["ponderacao_variaveis"] = selecionadas_validas or preferencias
 
     variaveis = st.multiselect(
-        "Variáveis usadas na ponderação (até 5)",
+        "Variáveis usadas na ponderação",
         options=list(dados.columns),
         default=preferencias,
         format_func=lambda v: _descricao_variavel(meta, v),
         key="ponderacao_variaveis",
         help=(
             "O app usa o nome e o rótulo que vierem no SPSS. Região não precisa ter um nome fixo: "
-            "pode ser Região X, Mesorregião, RPA ou outro rótulo do projeto."
+            "pode ser Região X, Mesorregião, RPA ou outro rótulo do projeto. Não há limite de "
+            "quantidade de variáveis."
         ),
     )
 
     if not variaveis:
         st.info("Selecione as variáveis que serão aproximadas ao universo.")
-        return
-    if len(variaveis) > 5:
-        st.error("Selecione no máximo 5 variáveis por ponderação.")
         return
 
     modelo_universo = None
@@ -3037,7 +3035,10 @@ def modulo_ponderacao():
                 use_container_width=True,
             )
             with st.expander("Ver código SPSS gerado"):
-                st.code(assistente_syntax, language="text")
+                st.text_area(
+                    "Código SPSS", value=assistente_syntax, height=400,
+                    disabled=True, label_visibility="collapsed", key="ponderacao_assistente_syntax_visualizacao",
+                )
 
     if resultado_reutilizado:
         syntax = cache_resultado["syntax"]

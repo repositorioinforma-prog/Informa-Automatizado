@@ -20,12 +20,15 @@ Reaproveita o máximo possível do que já existe e já foi validado:
 Sem dependência do Streamlit — pode ser testado isoladamente.
 """
 from openpyxl.styles import Alignment, Font
+import math
 from openpyxl.worksheet.pagebreak import Break
+from openpyxl.utils import get_column_letter
 
 from core.planilha_utils import (
     inserir_linhas_seguro,
     remover_linhas_seguro,
     linha_vazia_ate_coluna,
+    largura_total_mesclagem,
 )
 from core.relatorio_automatizado_math import (
     aplicar_layout_basico_planilha,
@@ -162,6 +165,155 @@ def aplicar_layout_total_automatico(ws):
     """
     aplicar_layout_basico_planilha(ws)
     ws.sheet_view.showGridLines = False
+
+
+# ---------------------------------------------------------------------------
+# Alturas do Total Automático
+# ---------------------------------------------------------------------------
+def _numero_linhas_visuais_total(texto, largura_total_colunas, tamanho_fonte):
+    """
+    Estima o número de linhas VISUAIS de uma célula no Total Automático.
+
+    Diferente da estimativa genérica antiga, considera cada quebra manual
+    (``\n``) separadamente. Isso permite normalizar exatamente em degraus
+    de 15 pontos: 1 linha = 15, 2 = 30, 3 = 45 etc.
+
+    Continua sendo uma aproximação para a quebra automática do Excel, mas
+    deixa de acrescentar margem vertical extra; o objetivo deste fluxo é
+    justamente evitar linhas visualmente altas quando o texto cabe em menos
+    linhas.
+    """
+    if texto in (None, ""):
+        return 1
+
+    tamanho = float(tamanho_fonte or 10)
+    largura_pt = (float(largura_total_colunas) + 0.62) * 7 * 0.90
+    largura_char = tamanho * 0.62
+    caracteres_por_linha = max(1, int(largura_pt / largura_char))
+
+    partes = str(texto).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    total = 0
+    for parte in partes:
+        # Uma quebra manual cria uma linha mesmo quando o trecho está vazio.
+        total += max(1, math.ceil(len(parte) / caracteres_por_linha))
+    return max(1, total)
+
+
+def _altura_exata_total(texto, largura_total_colunas, tamanho_fonte):
+    """Retorna 15, 30, 45... conforme as linhas visuais estimadas."""
+    return _numero_linhas_visuais_total(
+        texto, largura_total_colunas, tamanho_fonte
+    ) * 15
+
+
+def aplicar_codigo_09_total(ws):
+    """
+    Versão do ajuste de labels exclusiva do Total Automático.
+
+    Para toda linha que possua célula com ``wrap_text`` e conteúdo, calcula
+    quantas linhas visuais são realmente necessárias e aplica o maior valor
+    da linha em degraus exatos de 15 pontos. Não usa os antigos gatilhos de
+    altura fixa (30/45), porque eles eram justamente capazes de deixar
+    ``Masculino``, ``Feminino`` e outros termos curtos mais altos do que o
+    necessário. Quebras manuais introduzidas pelo código 04 são respeitadas.
+    """
+    alterados = 0
+    max_col = ws.max_column
+    max_row = ws.max_row
+
+    for r in range(1, max_row + 1):
+        maior_altura = None
+        for c in range(1, max_col + 1):
+            cel = ws.cell(row=r, column=c)
+            if cel.value in (None, ""):
+                continue
+            if not (cel.alignment and cel.alignment.wrap_text):
+                continue
+
+            largura = largura_total_mesclagem(ws, cel)
+            altura = _altura_exata_total(cel.value, largura, cel.font.size or 10)
+            if maior_altura is None or altura > maior_altura:
+                maior_altura = altura
+
+        if maior_altura is None:
+            continue
+        if ws.row_dimensions[r].height != maior_altura:
+            ws.row_dimensions[r].height = maior_altura
+            alterados += 1
+
+    return alterados
+
+
+def _remover_prefixo_titulo_total(texto):
+    prefixo = "titulo: "
+    if isinstance(texto, str) and texto.lower().startswith(prefixo):
+        return texto[len(prefixo):]
+    return texto
+
+
+def aplicar_codigo_11_total(ws):
+    """
+    Ajusta os títulos do Total Automático usando 15 pontos por linha.
+
+    O prefixo ``Titulo: `` é removido ANTES do cálculo, evitando que ele
+    aumente artificialmente a estimativa. Mantém negrito e centralização.
+    """
+    alterados = 0
+    max_col = ws.max_column
+    max_row = ws.max_row
+
+    for r in range(1, max_row + 1):
+        for c in range(1, max_col + 1):
+            cel = ws.cell(row=r, column=c)
+            if not (isinstance(cel.value, str) and "titulo: " in cel.value.lower()):
+                continue
+
+            texto_novo = _remover_prefixo_titulo_total(cel.value)
+            cel.value = texto_novo
+            largura = largura_total_mesclagem(ws, cel)
+            altura_final = _altura_exata_total(texto_novo, largura, cel.font.size or 10)
+            ws.row_dimensions[r].height = altura_final
+
+            a = cel.alignment
+            cel.alignment = Alignment(
+                horizontal="center", vertical="center",
+                text_rotation=a.text_rotation, wrap_text=a.wrap_text,
+                shrink_to_fit=a.shrink_to_fit, indent=a.indent,
+                relativeIndent=getattr(a, "relativeIndent", None),
+                justifyLastLine=a.justifyLastLine, readingOrder=a.readingOrder,
+            )
+            f = cel.font
+            cel.font = Font(
+                name=f.name, size=f.size, bold=True, italic=f.italic,
+                vertAlign=f.vertAlign, underline=f.underline, strike=f.strike,
+                color=f.color, charset=f.charset, family=f.family, scheme=f.scheme,
+                outline=f.outline, shadow=f.shadow, condense=f.condense,
+                extend=f.extend,
+            )
+            alterados += 1
+    return alterados
+
+
+def aplicar_codigo_12_total(ws):
+    """
+    Ajusta linhas de ``Pergunta:`` do Total Automático em degraus exatos
+    de 15 pontos, considerando também quebras manuais existentes.
+    """
+    alterados = 0
+    max_col = ws.max_column
+    max_row = ws.max_row
+
+    for r in range(1, max_row + 1):
+        for c in range(1, max_col + 1):
+            cel = ws.cell(row=r, column=c)
+            if not (isinstance(cel.value, str) and "pergunta: " in cel.value.lower()):
+                continue
+            largura = largura_total_mesclagem(ws, cel)
+            altura_final = _altura_exata_total(cel.value, largura, cel.font.size or 10)
+            if ws.row_dimensions[r].height != altura_final:
+                ws.row_dimensions[r].height = altura_final
+                alterados += 1
+    return alterados
 
 
 # ---------------------------------------------------------------------------
@@ -531,31 +683,87 @@ def _encontrar_ultima_linha_pergunta(ws):
 def adicionar_linhas_finais_em_branco(ws, quantidade=LINHAS_BRANCO_FINAL_RELATORIO):
     """
     Garante `quantidade` linhas em branco, altura 15, logo abaixo da
-    linha 'Pergunta:' da última tabela do relatório. Se por algum
-    motivo não achar nenhuma linha 'Pergunta:' no arquivo, cai pra
-    última linha com conteúdo (qualquer que seja) como referência.
+    linha 'Pergunta:' da última tabela do relatório e faz o limite final
+    da página/área de impressão terminar DEPOIS da última dessas linhas.
 
-    "Materializa" as células aplicando a fonte padrão da planilha (DIN
-    10) mesmo sem nenhum valor — uma célula com `value=None` some no
-    arquivo salvo (o openpyxl não grava células totalmente vazias),
-    então sem um estilo aplicado essas linhas não fariam parte da área
-    usada/impressa e o "respiro" desapareceria ao salvar.
+    Se por algum motivo não achar nenhuma linha 'Pergunta:' no arquivo,
+    cai pra última linha com conteúdo (qualquer que seja) como referência.
 
-    Idempotente na prática: reaplicar não duplica nada (só re-garante o
-    estilo/altura nas mesmas linhas), já que sempre calcula a partir da
-    mesma linha de referência.
+    As linhas são "materializadas" com fonte DIN 10 mesmo sem valor. Isso
+    é necessário porque o openpyxl não grava uma célula 100% vazia; sem
+    algum estilo, as linhas poderiam desaparecer ao salvar/reabrir.
+
+    Além disso:
+      - se havia uma quebra manual exatamente no fim antigo do relatório
+        (ou dentro das novas linhas), ela é removida;
+      - é criada uma quebra manual após a ÚLTIMA linha em branco;
+      - a área de impressão é estendida até essa mesma linha e mantém a
+        largura padrão do Total Automático em A:H.
+
+    Assim, no modo "Visualizar Quebra de Página" do Excel, a linha azul
+    inferior acompanha o novo respiro de duas linhas em vez de continuar
+    encostada na última linha da tabela.
+
+    Idempotente: reaplicar não acrescenta novas linhas; apenas re-garante
+    o estilo, a altura e o limite final na mesma posição relativa à última
+    linha 'Pergunta:'.
 
     Retorna a linha de referência (a última 'Pergunta:', ou a última
     linha com conteúdo se não achar nenhuma) ANTES de adicionar o respiro.
     """
+    import re
+
     ALTURA_LINHA_BRANCO_FINAL = 15
 
     ultima = _encontrar_ultima_linha_pergunta(ws)
     if not ultima:
         ultima = _ultima_linha_com_conteudo(ws)
+    if not ultima:
+        return 0
+
+    linha_final = ultima + quantidade
     fonte_padrao = Font(name="DIN", size=10)
+
+    # No Total Automático a largura útil/área de impressão é A:H.
+    # Materializar até ws.max_column (que pode chegar a M após o Divisor)
+    # fazia o limite visual da página ser estendido indevidamente até M.
+    # Por isso o respiro final é materializado somente na faixa A:H.
+    max_col_total = COL_FIM_CAPA
     for i in range(1, quantidade + 1):
         linha = ultima + i
-        ws.cell(row=linha, column=1).font = fonte_padrao
+        for c in range(COL_INICIO, max_col_total + 1):
+            cel = ws.cell(row=linha, column=c)
+            cel.value = None
+            cel.font = fonte_padrao
         ws.row_dimensions[linha].height = ALTURA_LINHA_BRANCO_FINAL
+
+    # Move qualquer quebra final antiga que esteja no fim da última
+    # tabela / dentro do novo respiro e garante uma quebra após a segunda
+    # linha em branco. As quebras intermediárias do relatório ficam
+    # completamente intactas.
+    ws.row_breaks.brk = [
+        b for b in ws.row_breaks.brk
+        if b.id is None or int(b.id) < ultima
+    ]
+    if not any(b.id is not None and int(b.id) == linha_final for b in ws.row_breaks.brk):
+        ws.row_breaks.append(Break(id=linha_final))
+    ws.row_breaks.brk = sorted(
+        ws.row_breaks.brk,
+        key=lambda b: int(b.id or 0),
+    )
+
+    # O Total Automático deve SEMPRE terminar na coluna H. O Divisor de
+    # Tabelas pode recalcular temporariamente a área de impressão até M,
+    # mas isso não deve vazar para o arquivo final deste fluxo. Mantemos
+    # apenas a linha inicial existente (quando identificável) e fixamos a
+    # largura em A:H, alterando o limite inferior para a segunda linha do
+    # respiro.
+    area_txt = str(ws.print_area or "")
+    match = re.search(
+        r"\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)",
+        area_txt.upper(),
+    )
+    linha_ini = int(match.group(2)) if match else 1
+    ws.print_area = f"A{linha_ini}:H{linha_final}"
+
     return ultima

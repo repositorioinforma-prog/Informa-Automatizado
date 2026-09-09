@@ -61,6 +61,19 @@ def modulo_legendas():
                 )
                 return
 
+            if not dados_referencia["linhas_titulo"]:
+                st.error(
+                    "Não encontrei nenhuma linha de TÍTULO reconhecível no "
+                    "arquivo de referência (ex.: uma célula com só "
+                    "\"LEGENDA\", \"LEGENDA REGIÕES\" ou \"LEGENDA CAPITAL\"). "
+                    "Sem um título, o programa não consegue montar a "
+                    "legenda mesmo reconhecendo os itens — confira se a "
+                    "célula do título não tem texto extra além do "
+                    "esperado (ex.: pontuação incomum ou uma palavra a "
+                    "mais)."
+                )
+                return
+
             try:
                 wb = openpyxl.load_workbook(arquivo_tabela, rich_text=True)
                 ws = wb.active

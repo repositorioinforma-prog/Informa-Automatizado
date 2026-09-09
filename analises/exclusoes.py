@@ -527,6 +527,9 @@ def _exibir_resultado_exclusoes():
             key="download_excl_sps"
         )
         with st.expander("Ver sintaxe SPSS gerada"):
-            st.code(sintaxe, language="sql")
+            st.text_area(
+                "Sintaxe SPSS", value=sintaxe, height=300, disabled=True,
+                label_visibility="collapsed", key="excl_sintaxe_visualizacao",
+            )
     else:
         st.success("Nenhuma exclusão necessária — a amostra já está dentro da tolerância.")

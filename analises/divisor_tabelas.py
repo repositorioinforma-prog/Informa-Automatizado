@@ -179,7 +179,7 @@ def modulo_divisor_tabelas():
         st.dataframe(pd.DataFrame(preview_rows), use_container_width=True, hide_index=True)
 
         st.caption("Remover termo de todos os títulos do Sumário:")
-        col_a, col_b = st.columns(2)
+        col_a, col_b, col_c = st.columns(3)
         with col_a:
             if st.button("Remover \"(Estimulada e Única)\"", key="divisor_tabelas_remover_unica"):
                 wb_edit = openpyxl.load_workbook(io.BytesIO(resultado_com_indice), rich_text=True)
@@ -197,5 +197,15 @@ def modulo_divisor_tabelas():
                 wb_edit.save(saida)
                 st.session_state["divisor_tabelas_resultado_com_indice"] = saida.getvalue()
                 st.success(f"Termo removido de {n} título(s).")
+                st.rerun()
+        with col_c:
+            if st.button("Remover ambos", key="divisor_tabelas_remover_ambos"):
+                wb_edit = openpyxl.load_workbook(io.BytesIO(resultado_com_indice), rich_text=True)
+                n1 = remover_termo_do_sumario(wb_edit, "(Estimulada e Única)")
+                n2 = remover_termo_do_sumario(wb_edit, "(Estimulada e Múltipla)")
+                saida = io.BytesIO()
+                wb_edit.save(saida)
+                st.session_state["divisor_tabelas_resultado_com_indice"] = saida.getvalue()
+                st.success(f"Termos removidos de {n1 + n2} título(s) ({n1} + {n2}).")
                 st.rerun()
 

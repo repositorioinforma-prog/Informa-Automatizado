@@ -19,6 +19,7 @@ from analises.banco_amostras_ui import modulo_banco_amostras
 from analises.ponderacao import modulo_ponderacao
 from analises.divisor_tabelas import modulo_divisor_tabelas
 from analises.padronizacao_titulos import modulo_padronizacao_titulos
+from analises.revisor_syntax import modulo_revisor_syntax
 from analises.correspondencia_multipla import analise_correspondencia_multipla
 from analises.correspondencia_simples import analise_correspondencia
 from core.dados import carregar_dados
@@ -281,6 +282,7 @@ def main():
             "Ponderação",
             "Divisor de Tabelas de Regioes",
             "Padronização de Títulos",
+            "Revisor de Syntax SPSS",
         ),
     )
 
@@ -331,6 +333,10 @@ def main():
 
     if analise == "Padronização de Títulos":
         modulo_padronizacao_titulos()
+        return
+
+    if analise == "Revisor de Syntax SPSS":
+        modulo_revisor_syntax()
         return
 
     uploaded_file = st.file_uploader("Carregar Arquivo", type=["csv", "xlsx", "sav"])

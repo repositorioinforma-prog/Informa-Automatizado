@@ -21,7 +21,10 @@ estimativa nenhuma:
 Duas ações possíveis pra quem ultrapassa:
     - tabela NORMAL: divide os labels em partes, repetindo
       cabeçalho+Base+Pergunta(+legenda, se houver) em cada parte, com
-      "Continuação" a partir da 2ª;
+      "Continuação" a partir da 2ª — se houver mais de uma continuação
+      (3+ partes no total), cada uma vem numerada ("Continuação - Parte
+      1", "Continuação - Parte 2" etc.); com só uma divisão (2 partes),
+      fica "Continuação" sem número;
     - tabela PROTEGIDA (nunca pode dividir os labels no meio — ex.:
       IPV, Avaliação com Aprovação/Regular/Reprovação): se tiver
       legenda, a legenda é movida pra uma página própria, sem tocar nos
@@ -38,7 +41,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from openpyxl.formula.translate import Translator
-from openpyxl.styles import Font
+from openpyxl.styles import Border, Font
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.pagebreak import Break
 
@@ -205,7 +208,7 @@ def _find_footer_end(ws, base_row: int, max_col: int, max_row: int) -> int:
 
         if n.startswith("LEGENDA"):
             break
-        if _row_has_total(ws, r, max_col) or n == "BASE":
+        if _row_has_total(ws, r, max_col) or n in ("BASE", "BASE REDUZIDA"):
             break
 
         if _row_has_content(ws, r, max_col):
@@ -285,14 +288,14 @@ def detectar_tabelas(ws) -> list[TableInfo]:
     max_row_atual = ws.max_row
 
     for base_row in range(1, max_row_atual + 1):
-        if _norm(ws.cell(row=base_row, column=1).value) != "BASE":
+        if _norm(ws.cell(row=base_row, column=1).value) not in ("BASE", "BASE REDUZIDA"):
             continue
         if base_row in used_bases:
             continue
 
         header_start = None
         for r in range(base_row - 1, max(0, base_row - 100), -1):
-            if _norm(ws.cell(row=r, column=1).value) == "BASE":
+            if _norm(ws.cell(row=r, column=1).value) in ("BASE", "BASE REDUZIDA"):
                 break
             if _row_has_total(ws, r, max_col):
                 header_start = r
@@ -626,6 +629,13 @@ def _dividir_tabela(ws, table: TableInfo, max_col: int) -> dict:
 
     _limpar_regiao_com_seguranca(ws, table.start_row, table.start_row + tamanho_novo - 1, max_col)
 
+    # Referência da borda de cima que a primeira linha de dado tem, na
+    # tabela ORIGINAL, fechando o cabeçalho por baixo — usada logo
+    # abaixo pra recriar esse fechamento em toda parte nova.
+    borda_fechamento_topo = {
+        c: cells[(table.label_start, c)]["border"] for c in range(1, max_col + 1)
+    }
+
     cursor = table.start_row
     for parte_idx, grupo in enumerate(grupos):
         linhas_origem = prefixo + grupo + sufixo
@@ -636,12 +646,42 @@ def _dividir_tabela(ws, table: TableInfo, max_col: int) -> dict:
             mapa_linhas[origem] = cursor
             cursor += 1
 
+        # A primeira linha de dado de CADA parte precisa fechar a borda
+        # de cima do cabeçalho — só a linha que já era a primeira antes
+        # de qualquer divisão vem com essa borda no arquivo de origem;
+        # as demais eram, na tabela original, uma linha "do meio" (sem
+        # necessidade de borda de fechamento ali) e só viram a primeira
+        # linha de uma parte nova depois da divisão. Sem esta correção,
+        # a borda de cima simplesmente não existe nelas — é exatamente
+        # o que fazia o estilo de borda parecer diferente nas tabelas
+        # de "Continuação".
+        destino_primeira_linha = mapa_linhas[grupo[0]]
+        for c in range(1, max_col + 1):
+            cel = ws.cell(row=destino_primeira_linha, column=c)
+            borda_atual = cel.border
+            cel.border = Border(
+                top=borda_fechamento_topo[c].top,
+                bottom=borda_atual.bottom,
+                left=borda_atual.left,
+                right=borda_atual.right,
+            )
+
         if parte_idx > 0:
             offset_cabecalho = prefixo.index(table.header_start)
             linha_continuacao = prefixo[offset_cabecalho]
             linha_continuacao_destino = mapa_linhas[linha_continuacao]
             cel = ws.cell(row=linha_continuacao_destino, column=1)
-            cel.value = CONTINUATION_TEXT
+            total_continuacoes = len(grupos) - 1
+            if total_continuacoes > 1:
+                # Mais de uma continuação (tabela dividida em 3+ partes):
+                # numera qual parte é cada uma — "Continuação - Parte 1",
+                # "Continuação - Parte 2" etc. `parte_idx` já é o número
+                # certo (1 pra a primeira continuação, 2 pra a segunda...).
+                cel.value = f"{CONTINUATION_TEXT} - Parte {parte_idx}"
+            else:
+                # Só uma divisão (tabela em 2 partes): mantém o texto
+                # simples, sem numeração.
+                cel.value = CONTINUATION_TEXT
             cel.font = Font(name="DIN", size=9, bold=True)
 
         _remontar_mesclagens(ws, merges, mapa_linhas)

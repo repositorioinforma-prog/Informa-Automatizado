@@ -44,6 +44,19 @@ def modulo_legendas():
         st.info("Envie os dois arquivos .xlsx para começar.")
         return
 
+    recuo = st.number_input(
+        "Recuo das linhas sem negrito (indentação)",
+        min_value=0, max_value=20, value=5, step=1,
+        key="lg_recuo",
+        help=(
+            "Linhas de legenda que NÃO começam com algo em negrito "
+            "(sem o prefixo tipo \"Região X (%):\") ficam alinhadas à "
+            "esquerda com recuo — mesmo efeito de selecionar a linha no "
+            "Excel, ir em Alinhamento > Horizontal: \"Esquerda (recuo)\" "
+            "e ajustar o campo \"Recuo\"."
+        ),
+    )
+
     if st.button("Calcular e gerar arquivo", key="lg_calcular"):
         with st.spinner("Lendo a referência e casando os cabeçalhos..."):
             try:
@@ -77,7 +90,7 @@ def modulo_legendas():
             try:
                 wb = openpyxl.load_workbook(arquivo_tabela, rich_text=True)
                 ws = wb.active
-                n_inseridas = aplicar_legendas_por_chave(ws, dados_referencia)
+                n_inseridas = aplicar_legendas_por_chave(ws, dados_referencia, recuo=recuo)
             except Exception as e:
                 st.error(f"Não foi possível processar o relatório: {e}")
                 return

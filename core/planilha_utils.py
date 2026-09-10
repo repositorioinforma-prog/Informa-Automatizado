@@ -160,13 +160,28 @@ def estimar_numero_linhas(texto, largura_total_colunas, tamanho_fonte):
     multiplicar por nenhuma altura-por-linha. Usado onde a altura final
     precisa ser uma fórmula direta em cima do número de linhas (ex.:
     código 12 — altura da Pergunta = nº de linhas × 15).
+
+    Texto com quebra MANUAL (\\n) é tratado trecho por trecho — cada
+    trecho entre quebras conta as próprias linhas por quebra automática
+    (por largura), e o total é a SOMA delas. Antes, o texto inteiro
+    (quebras manuais inclusas na contagem de caracteres) era tratado
+    como uma única sequência a dividir pela largura — o que subestimava
+    a altura sempre que havia quebra manual: um texto como "Renda Média
+    Mensal Domiciliar\\n(em Salário Mínimo)" tem 2 trechos que, cada um,
+    já pode precisar de mais de uma linha por quebra automática (o
+    primeiro sozinho não cabe numa linha só em colunas estreitas) — a
+    contagem antiga tratava os ~50 caracteres como uma sequência linear
+    só, chegando a menos linhas do que as que realmente aparecem no
+    Excel, cortando o texto por cima da borda da célula.
     """
     if not texto:
         return 1
     largura_pt = (largura_total_colunas + 0.62) * 7 * 0.90
     largura_char = tamanho_fonte * 0.62
     caracteres_por_linha = max(1, int(largura_pt / largura_char))
-    return max(1, math.ceil(len(str(texto)) / caracteres_por_linha))
+    trechos = str(texto).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    total = sum(max(1, math.ceil(len(trecho) / caracteres_por_linha)) for trecho in trechos)
+    return max(1, total)
 
 
 def estimar_altura_calculada(texto, largura_total_colunas, tamanho_fonte):

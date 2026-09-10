@@ -1397,8 +1397,9 @@ def aplicar_codigo_07(ws):
     linhas_inseridas_total = sum(qtd for tipo, _pos, qtd in operacoes if tipo == "inserir")
     linhas_removidas_total = sum(qtd for tipo, _pos, qtd in operacoes if tipo == "remover")
 
-    # Mesclagens: desfaz e recria na posição final — uma vez por
-    # mesclagem existente, não uma vez por operação de inserção/remoção.
+    # Mesclagens: desfaz agora (registra os alvos pra recriar depois).
+    # A RECRIAÇÃO (`_remesclar_rapido`) só acontece DEPOIS do bloco
+    # "Células" abaixo — ver nota naquele bloco pra explicação do porquê.
     faixas_a_remesclar = []
     for rng in list(ws.merged_cells.ranges):
         dentro_de_removida = (
@@ -1411,8 +1412,6 @@ def aplicar_codigo_07(ws):
             novo_max = rng.max_row if rng.max_row > max_row_original else _nova_posicao(rng.max_row)
             faixas_a_remesclar.append((novo_min, rng.min_col, novo_max, rng.max_col))
         _desfazer_mesclagem_rapido(ws, rng)
-    for min_row, min_col, max_row_faixa, max_col in faixas_a_remesclar:
-        _remesclar_rapido(ws, min_row=min_row, min_col=min_col, max_row=max_row_faixa, max_col=max_col)
 
     # Alturas de linha customizadas.
     alturas_a_mover = []
@@ -1444,6 +1443,24 @@ def aplicar_codigo_07(ws):
         cel.row = nr
         novas_cells[(nr, c)] = cel
     ws._cells = novas_cells
+
+    # SÓ AGORA recria as mesclagens nas posições finais. Motivo: a nova
+    # posição de uma mesclagem (ex.: título que vai de A10:B10 pra
+    # A13:B13) pode coincidir com a posição ANTIGA de uma célula de
+    # dado que ainda não tinha sido movida — `_remesclar_rapido` limpa
+    # o conteúdo das células não-âncora da faixa (igual o
+    # `merge_cells()` oficial faz), então recriar a mesclagem ANTES de
+    # mover as células apagava valores que só por coincidência de
+    # numeração ainda estavam de passagem por aquela linha (bug real,
+    # encontrado com arquivo de produção: "Regular", nomes de
+    # candidatos e "Base" sumindo em várias tabelas — sempre a coluna
+    # de valor, nunca o rótulo, porque a coluna A é a âncora do merge e
+    # só a não-âncora é limpa). Fazendo a recriação depois, a célula
+    # não-âncora que a mesclagem limpa já é, de fato, a célula vazia
+    # que pertence à nova posição do título — não um valor de outra
+    # linha que só passou por ali de raspão.
+    for min_row, min_col, max_row_faixa, max_col in faixas_a_remesclar:
+        _remesclar_rapido(ws, min_row=min_row, min_col=min_col, max_row=max_row_faixa, max_col=max_col)
 
     # Quebras de página já existentes: remapeia ou descarta as que
     # caíam dentro de uma faixa removida.
@@ -1488,7 +1505,19 @@ def aplicar_codigo_07(ws):
 # Código 10 — Ajusta o título da Renda
 # =========================================================
 def aplicar_codigo_10(ws):
-    """Quebra 'Renda Média Mensal Domiciliar (em Salário Mínimo)' em 2 linhas."""
+    """Quebra 'Renda Média Mensal Domiciliar (em Salário Mínimo)' em 2 linhas.
+
+    A altura da linha é CALCULADA a partir do texto já quebrado e da
+    largura real da mesclagem (mesmo método do código 09), não mais um
+    valor fixo de 30. Corrige um bug real: 30 dava conta só de 2 linhas
+    visuais, mas "Renda Média Mensal Domiciliar" sozinho já não cabe
+    numa linha só dentro da largura da coluna — o Excel quebra
+    automaticamente em 2 linhas, e com a quebra manual do "(em Salário
+    Mínimo)" dá 3 linhas visuais no total. Com a altura travada em 30,
+    o texto estourava pra cima e sobrepunha a borda superior da célula
+    (visualmente parecia uma borda mais fina/cortada bem em cima dessa
+    coluna especificamente, e só dessa — as demais colunas do mesmo
+    cabeçalho, com texto de 1 linha, cabiam sem problema)."""
     alvo = "Renda Média Mensal Domiciliar (em Salário Mínimo)"
     formatado = "Renda Média Mensal Domiciliar\n(em Salário Mínimo)"
     alterados = 0
@@ -1499,7 +1528,21 @@ def aplicar_codigo_10(ws):
             if cel.value == alvo:
                 cel.value = formatado
                 cel.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-                ws.row_dimensions[r].height = 30
+                largura = largura_total_mesclagem(ws, cel)
+                tamanho_fonte = cel.font.size or 10
+                estim = estimar_altura_calculada(cel.value, largura, tamanho_fonte)
+                # Piso de 45 (3 linhas de 15pt) em vez do valor genérico
+                # da estimativa: confirmado por render real (LibreOffice)
+                # que esse texto específico precisa de 3 linhas visuais
+                # em larguras de coluna típicas — "Renda Média Mensal
+                # Domiciliar" sozinho já quebra em 2 linhas automáticas,
+                # mais a linha do "(em Salário Mínimo)" — mas a fórmula
+                # genérica de caracteres-por-linha (calibrada pra
+                # rótulos em geral, não pra este texto específico)
+                # ainda estimava só 2 linhas, insuficiente.
+                nova_altura = max(45.0, round(estim, 1))
+                if ws.row_dimensions[r].height != nova_altura or ws.row_dimensions[r].height is None:
+                    ws.row_dimensions[r].height = nova_altura
                 alterados += 1
     return alterados
 

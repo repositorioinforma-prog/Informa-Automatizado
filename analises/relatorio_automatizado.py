@@ -491,6 +491,18 @@ def modulo_relatorio_automatizado():
         arquivo_legenda = st.file_uploader(
             "Arquivo de legendas (.xlsx)", type=["xlsx"], key="ra_upload_legenda"
         )
+        recuo = st.number_input(
+            "Recuo das linhas sem negrito (indentação)",
+            min_value=0, max_value=20, value=5, step=1,
+            key="ra_legendas_recuo",
+            help=(
+                "Linhas de legenda que NÃO começam com algo em negrito "
+                "(sem o prefixo tipo \"Região X (%):\") ficam alinhadas à "
+                "esquerda com recuo — mesmo efeito de selecionar a linha "
+                "no Excel, ir em Alinhamento > Horizontal: \"Esquerda "
+                "(recuo)\" e ajustar o campo \"Recuo\"."
+            ),
+        )
 
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -534,7 +546,7 @@ def modulo_relatorio_automatizado():
                     wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
                     ws = wb.active
                     status.update(label="Casando os cabeçalhos e inserindo as legendas...")
-                    n_inseridas = aplicar_legendas_por_chave(ws, dados_referencia)
+                    n_inseridas = aplicar_legendas_por_chave(ws, dados_referencia, recuo=recuo)
 
                     status.update(label="Salvando o arquivo...")
                     saida = io.BytesIO()
@@ -728,10 +740,13 @@ def modulo_relatorio_automatizado():
             "Checklist antes de entregar:\n\n"
             "- [ ] Colocar a capa e a contra-capa\n"
             "- [ ] Colocar os cabeçalhos nas perguntas de Múltiplas\n"
+            "- [ ] Colocar base das múltiplas de religião\n"
             "- [ ] Conferir se a metodologia da capa não mistura tempos "
             "verbais (deve estar tudo no passado)\n"
             "- [ ] Ver se precisa da página do GDS ou se a pesquisa é online\n"
             "- [ ] Conferir o relatório inteiro\n"
+            "- [ ] Rodar VBA de Cabeçalho para arrumar bordas finas dos "
+            "segmentos\n"
             "- [ ] Rodar o Índice (código 16, em Códigos Individuais)"
         )
 

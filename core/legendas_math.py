@@ -911,7 +911,7 @@ def _normalizar_fonte_titulo_legenda(item):
     return CellRichText(novos_blocos)
 
 
-def _copiar_linha_legenda(ws_destino, linha_destino, dados_referencia, linha_ref, max_col_destino, tipo="item"):
+def _copiar_linha_legenda(ws_destino, linha_destino, dados_referencia, linha_ref, max_col_destino, tipo="item", recuo=5):
     """
     Copia uma linha da referência pro relatório, já reaplicando a
     formatação que se perde numa cópia de valor puro:
@@ -922,7 +922,9 @@ def _copiar_linha_legenda(ws_destino, linha_destino, dados_referencia, linha_ref
         (evita o problema de cor de tema divergindo entre o arquivo de
         legenda e o relatório);
       - linhas de continuação (texto simples, sem prefixo em negrito)
-        ganham o mesmo DIN Book 9 e recuo.
+        ganham o mesmo DIN Book 9 e recuo (alinhamento "Esquerda
+        (recuo)" do Excel, `recuo` unidades — 5 por padrão, mas quem
+        chama pode escolher outro valor).
 
     A fonte da CÉLULA (não só dos trechos de rich text) é sempre
     definida também — sem isso, qualquer trecho de um item de legenda
@@ -953,7 +955,7 @@ def _copiar_linha_legenda(ws_destino, linha_destino, dados_referencia, linha_ref
             # própria dentro de um item em rich text
             cel.font = Font(name="DIN Book", size=9, bold=False, color="FF000000")
             if not isinstance(valor_normalizado, CellRichText):
-                cel.alignment = Alignment(horizontal="left", indent=1)
+                cel.alignment = Alignment(horizontal="left", indent=recuo)
 
     # Altura fixa 13 em toda linha de legenda colada (título e item) — a
     # pedido do Lucas, substitui a altura copiada do arquivo de
@@ -962,12 +964,17 @@ def _copiar_linha_legenda(ws_destino, linha_destino, dados_referencia, linha_ref
     ws_destino.row_dimensions[linha_destino].height = 13
 
 
-def _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino):
+def _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino, recuo=5):
     """Cola título + itens filtrados na posição indicada. Devolve True se
     algo foi realmente copiado, False se não achou uma linha de título
     de referência válida (nesse caso não cola nada — quem chama não
     deve contar isso como sucesso nem consumir o espaço já reservado
-    como se a legenda tivesse sido inserida de verdade)."""
+    como se a legenda tivesse sido inserida de verdade).
+
+    `recuo`: tamanho do recuo (alinhamento "Esquerda (recuo)" do Excel)
+    aplicado às linhas que NÃO começam com algo em negrito (linhas de
+    continuação de um item, sem o prefixo "Região X (%):") — repassado
+    pra `_copiar_linha_legenda`."""
     mapa = dados_referencia["mapa"]
     max_col = dados_referencia["max_col"]
 
@@ -981,7 +988,7 @@ def _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino):
     if not linha_titulo_ref:
         return False
 
-    _copiar_linha_legenda(ws, linha_destino, dados_referencia, linha_titulo_ref, max_col, tipo="titulo")
+    _copiar_linha_legenda(ws, linha_destino, dados_referencia, linha_titulo_ref, max_col, tipo="titulo", recuo=recuo)
 
     # a legenda em si começa DUAS linhas abaixo do título — uma linha em
     # branco de propósito entre as duas, igual ao padrão do arquivo de
@@ -992,7 +999,7 @@ def _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino):
             continue
         ini, fim = mapa[chave]["linha_inicio"], mapa[chave]["linha_fim"]
         for offset, linha_ref in enumerate(range(ini, fim + 1)):
-            _copiar_linha_legenda(ws, linha_atual + offset, dados_referencia, linha_ref, max_col, tipo="item")
+            _copiar_linha_legenda(ws, linha_atual + offset, dados_referencia, linha_ref, max_col, tipo="item", recuo=recuo)
         linha_atual += (fim - ini + 1)
 
     return True
@@ -1055,7 +1062,60 @@ def _garantir_duas_linhas_apos_legenda(ws, linha_fim_legenda):
         ws.cell(row=rr, column=1).font = Font(name="DIN Book", size=9)
 
 
-def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
+def remover_linha_branca_apos_titulo_legenda(ws):
+    """
+    Etapa de VERIFICAÇÃO — roda depois de qualquer inserção de legenda
+    (e também pega legendas que já vieram assim no arquivo original,
+    sem ter passado por inserção nenhuma daqui). Varre a planilha
+    inteira atrás de cabeçalhos "LEGENDA" (só "LEGENDA", ou com um
+    rótulo depois, ex.: "LEGENDA CAPITAL") e confere: se a linha logo
+    abaixo do cabeçalho estiver totalmente em branco e a linha seguinte
+    a essa tiver conteúdo de verdade (não é outro cabeçalho "LEGENDA...",
+    o que indicaria dois blocos empilhados, e não um vão espúrio), essa
+    linha em branco é removida — o padrão esperado é cabeçalho seguido
+    direto pelo primeiro item, sem vão no meio. O vão "de verdade" (que
+    NÃO deve ser mexido) fica ANTES do "LEGENDA" (separando-o da
+    Pergunta) e DEPOIS do último item (separando a legenda do que vem
+    a seguir) — nunca logo abaixo do próprio título.
+
+    Varre de baixo pra cima: remover uma linha desloca tudo abaixo dela
+    pra cima, então corrigir de cima pra baixo bagunçaria os números de
+    linha das próximas ocorrências ainda não visitadas.
+
+    Returns:
+        Número de linhas em branco removidas.
+    """
+    max_col = ws.max_column
+
+    linhas_titulo = []
+    for r in range(1, ws.max_row + 1):
+        valor = ws.cell(row=r, column=1).value
+        if isinstance(valor, str) and valor.strip().upper().startswith("LEGENDA"):
+            linhas_titulo.append(r)
+
+    removidas = 0
+    for r in reversed(linhas_titulo):
+        max_row_atual = ws.max_row
+        linha_branca = r + 1
+        linha_conteudo = r + 2
+        if linha_branca > max_row_atual or linha_conteudo > max_row_atual:
+            continue
+        if not _linha_totalmente_vazia_v2(ws, linha_branca, max_col):
+            continue
+        if _linha_totalmente_vazia_v2(ws, linha_conteudo, max_col):
+            continue
+        valor_conteudo = ws.cell(row=linha_conteudo, column=1).value
+        if isinstance(valor_conteudo, str) and valor_conteudo.strip().upper().startswith("LEGENDA"):
+            # não é um vão espúrio — são dois blocos "LEGENDA..."
+            # empilhados, e a linha em branco entre eles é legítima.
+            continue
+        remover_linhas_seguro(ws, linha_branca, 1)
+        removidas += 1
+
+    return removidas
+
+
+def _aplicar_legendas_por_chave_interna(ws, dados_referencia, titulos_aceitos=None, recuo=5):
     """
     Para cada linha 'Pergunta:' do relatório, procura — de baixo pra
     cima, dentro dos limites da mesma página impressa (usa as quebras de
@@ -1077,6 +1137,10 @@ def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
             {"REGIOES", "CAPITAL"}) usado como uma das regras de
             confiança pra achar o cabeçalho certo. Se None, usa o que
             foi derivado automaticamente da própria referência.
+        recuo: tamanho do recuo (alinhamento "Esquerda (recuo)" do
+            Excel) aplicado às linhas de legenda que NÃO começam com
+            algo em negrito — 5 por padrão, ajustável por quem chama
+            (ex.: um campo na interface).
 
     Returns:
         Número de tabelas que receberam legenda.
@@ -1205,7 +1269,7 @@ def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
         linha_destino = linha_pergunta + 2
         inserir_linhas_seguro(ws, linha_destino, qtd_linhas)
 
-        colou = _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino)
+        colou = _colar_legenda_filtrada(ws, dados_referencia, chaves, linha_destino, recuo=recuo)
         if not colou:
             # Não achou uma linha de título de referência válida (ex.:
             # arquivo de legenda com título em formato não reconhecido)
@@ -1219,4 +1283,24 @@ def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None):
         _garantir_duas_linhas_apos_legenda(ws, linha_destino + qtd_linhas - 1)
         inseridas += 1
 
+    return inseridas
+
+
+def aplicar_legendas_por_chave(ws, dados_referencia, titulos_aceitos=None, recuo=5):
+    """
+    Encapsula `_aplicar_legendas_por_chave_interna` (a lógica de
+    localizar/inserir legendas em si) com uma etapa de verificação
+    final que SEMPRE roda, mesmo quando a função interna sai cedo sem
+    inserir nada (ex.: arquivo sem "Pergunta:", ou sem cabeçalho batendo
+    com nenhuma chave) — porque essa verificação também precisa pegar
+    legendas que já vieram prontas no arquivo original, sem ter
+    passado por nenhuma inserção nossa. Ver
+    `remover_linha_branca_apos_titulo_legenda` para o que ela faz.
+
+    `recuo`: tamanho do recuo (alinhamento "Esquerda (recuo)" do Excel)
+    aplicado às linhas de legenda que NÃO começam com algo em negrito —
+    5 por padrão.
+    """
+    inseridas = _aplicar_legendas_por_chave_interna(ws, dados_referencia, titulos_aceitos, recuo=recuo)
+    remover_linha_branca_apos_titulo_legenda(ws)
     return inseridas

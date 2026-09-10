@@ -199,7 +199,7 @@ def extrair_bases(blocos_bases, apenas_blocos=None):
 
     for b in (apenas_blocos if apenas_blocos is not None else blocos_bases):
         linha_base = next(
-            (d for d in b["dados"] if d and isinstance(d[0], str) and d[0].strip() == "Base"),
+            (d for d in b["dados"] if d and isinstance(d[0], str) and d[0].strip().upper() in ("BASE", "BASE REDUZIDA")),
             None
         )
         if linha_base is None:

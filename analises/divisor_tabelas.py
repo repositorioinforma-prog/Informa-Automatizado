@@ -49,10 +49,13 @@ def modulo_divisor_tabelas():
     st.info(
         "Tabelas normais que ultrapassam o limite têm os labels divididos em "
         "partes, repetindo cabeçalho/Base/Pergunta/legenda em cada uma, com "
-        "'Continuação' a partir da 2ª. Tabelas protegidas (ex.: IPV, Avaliação "
-        "com Aprovação/Regular/Reprovação) nunca têm os labels divididos — se "
-        "tiverem legenda, ela é movida pra uma página própria; sem legenda, a "
-        "tabela só é reportada, sem alteração automática."
+        "'Continuação' a partir da 2ª (numerada como 'Continuação - Parte 1', "
+        "'Parte 2' etc. quando há mais de uma divisão; só 'Continuação', sem "
+        "número, quando a tabela é dividida em apenas 2 partes). Tabelas "
+        "protegidas (ex.: IPV, Avaliação com Aprovação/Regular/Reprovação) "
+        "nunca têm os labels divididos — se tiverem legenda, ela é movida "
+        "pra uma página própria; sem legenda, a tabela só é reportada, sem "
+        "alteração automática."
     )
 
     uploaded = st.file_uploader(

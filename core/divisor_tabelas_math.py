@@ -294,7 +294,17 @@ def detectar_tabelas(ws) -> list[TableInfo]:
             continue
 
         header_start = None
-        for r in range(base_row - 1, max(0, base_row - 100), -1):
+        # Sem limite artificial de distância aqui — o laço já para
+        # sozinho ao encontrar outra "BASE"/"BASE REDUZIDA" (a base da
+        # tabela ANTERIOR) ou ao achar o cabeçalho "Total" desta
+        # tabela, então varrer até a linha 1 se precisar é seguro (não
+        # tem como "vazar" pra dentro de outra tabela). Um teto de 100
+        # linhas aqui antes fazia tabelas com mais de ~100 labels (ex.:
+        # uma pergunta espontânea com 150+ candidatos) nunca serem
+        # detectadas — o cabeçalho ficava fora da janela de busca,
+        # `header_start` continuava `None`, e a tabela inteira era
+        # pulada pelo Divisor de Tabelas sem nenhum aviso.
+        for r in range(base_row - 1, 0, -1):
             if _norm(ws.cell(row=r, column=1).value) in ("BASE", "BASE REDUZIDA"):
                 break
             if _row_has_total(ws, r, max_col):

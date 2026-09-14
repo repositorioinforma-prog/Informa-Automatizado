@@ -29,6 +29,7 @@ from core.planilha_utils import (
     remover_linhas_seguro,
     linha_vazia_ate_coluna,
     largura_total_mesclagem,
+    _simular_linhas_quebra_palavra,
 )
 from core.relatorio_automatizado_math import (
     aplicar_layout_basico_planilha,
@@ -174,9 +175,13 @@ def _numero_linhas_visuais_total(texto, largura_total_colunas, tamanho_fonte):
     """
     Estima o número de linhas VISUAIS de uma célula no Total Automático.
 
-    Diferente da estimativa genérica antiga, considera cada quebra manual
-    (``\n``) separadamente. Isso permite normalizar exatamente em degraus
-    de 15 pontos: 1 linha = 15, 2 = 30, 3 = 45 etc.
+    Considera cada quebra manual (``\n``) separadamente, e dentro de
+    cada trecho SIMULA a quebra automática palavra por palavra (mesma
+    lógica de `estimar_numero_linhas`, em planilha_utils.py — ver a
+    docstring lá pro porquê: dividir caracteres/largura sem respeitar
+    onde as palavras realmente quebram subestima a altura, principalmente
+    com palavras longas como "República/2026"). Isso permite normalizar
+    exatamente em degraus de 15 pontos: 1 linha = 15, 2 = 30, 3 = 45 etc.
 
     Continua sendo uma aproximação para a quebra automática do Excel, mas
     deixa de acrescentar margem vertical extra; o objetivo deste fluxo é
@@ -188,14 +193,17 @@ def _numero_linhas_visuais_total(texto, largura_total_colunas, tamanho_fonte):
 
     tamanho = float(tamanho_fonte or 10)
     largura_pt = (float(largura_total_colunas) + 0.62) * 7 * 0.90
-    largura_char = tamanho * 0.62
+    # mesma margem de segurança de 1.15 calibrada em planilha_utils.py —
+    # confirmada com renderização real contra um título sem quebra
+    # manual ("Intenção de voto para Presidente da República/2026 -
+    # Cenário Único (Estimulada e Única)"), que a versão sem essa
+    # margem estimava em 3 linhas quando o Excel/LibreOffice realmente
+    # usa 4.
+    largura_char = tamanho * 0.62 * 1.15
     caracteres_por_linha = max(1, int(largura_pt / largura_char))
 
     partes = str(texto).replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    total = 0
-    for parte in partes:
-        # Uma quebra manual cria uma linha mesmo quando o trecho está vazio.
-        total += max(1, math.ceil(len(parte) / caracteres_por_linha))
+    total = sum(_simular_linhas_quebra_palavra(parte, caracteres_por_linha) for parte in partes)
     return max(1, total)
 
 

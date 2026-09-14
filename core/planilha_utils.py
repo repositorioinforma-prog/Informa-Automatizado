@@ -154,34 +154,69 @@ def estimar_numero_linhas(texto, largura_total_colunas, tamanho_fonte):
     """
     Estima quantas linhas de texto (por quebra automática) uma célula
     com quebra de linha vai precisar, dada a largura total das colunas
-    e o tamanho da fonte — mesma aproximação por contagem de caracteres
-    usada em `estimar_altura_calculada` (ver docstring lá pras
-    ressalvas/calibração), só que devolve o número de linhas cru, sem
-    multiplicar por nenhuma altura-por-linha. Usado onde a altura final
-    precisa ser uma fórmula direta em cima do número de linhas (ex.:
-    código 12 — altura da Pergunta = nº de linhas × 15).
+    e o tamanho da fonte — mesma aproximação usada em
+    `estimar_altura_calculada` (ver docstring lá pras ressalvas/
+    calibração), só que devolve o número de linhas cru, sem multiplicar
+    por nenhuma altura-por-linha. Usado onde a altura final precisa ser
+    uma fórmula direta em cima do número de linhas (ex.: código 12 —
+    altura da Pergunta = nº de linhas × 15).
 
     Texto com quebra MANUAL (\\n) é tratado trecho por trecho — cada
     trecho entre quebras conta as próprias linhas por quebra automática
-    (por largura), e o total é a SOMA delas. Antes, o texto inteiro
-    (quebras manuais inclusas na contagem de caracteres) era tratado
-    como uma única sequência a dividir pela largura — o que subestimava
-    a altura sempre que havia quebra manual: um texto como "Renda Média
-    Mensal Domiciliar\\n(em Salário Mínimo)" tem 2 trechos que, cada um,
-    já pode precisar de mais de uma linha por quebra automática (o
-    primeiro sozinho não cabe numa linha só em colunas estreitas) — a
-    contagem antiga tratava os ~50 caracteres como uma sequência linear
-    só, chegando a menos linhas do que as que realmente aparecem no
-    Excel, cortando o texto por cima da borda da célula.
+    (por largura), e o total é a SOMA delas — nunca o texto inteiro
+    como uma sequência só (isso subestimava a altura sempre que havia
+    quebra manual: um texto como "Renda Média Mensal Domiciliar\\n(em
+    Salário Mínimo)" tem 2 trechos que, cada um, já pode precisar de
+    mais de uma linha por quebra automática).
+
+    Dentro de cada trecho, a quebra automática é SIMULADA palavra por
+    palavra (empacotando palavras numa linha até estourar a largura,
+    igual o Excel faz) — não apenas `caracteres_do_trecho /
+    caracteres_por_linha`. Essa divisão simples ignora que o Excel não
+    quebra no meio de uma palavra: uma palavra longa que não cabe no
+    resto da linha força a quebra ali, sobrando espaço vazio no fim da
+    linha anterior — então o número de linhas reais costuma ser maior
+    do que a divisão simples prevê, principalmente com palavras longas
+    (nomes com barra, hífen, números). Confirmado com renderização real
+    (LibreOffice) em dois casos: um texto com quebra
+    manual («Renda Média...») e um título sem quebra manual nenhuma,
+    só automática («Intenção de voto para Presidente da República/2026
+    - Cenário Único (Estimulada e Única)») — os dois precisavam de mais
+    linhas do que a divisão simples calculava.
     """
     if not texto:
         return 1
     largura_pt = (largura_total_colunas + 0.62) * 7 * 0.90
-    largura_char = tamanho_fonte * 0.62
+    # o 1.15 é margem de segurança adicional calibrada com os dois casos
+    # reais acima — a largura de caractere "crua" (tamanho*0.62) por si
+    # só já não bastava, mesmo simulando quebra por palavra.
+    largura_char = tamanho_fonte * 0.62 * 1.15
     caracteres_por_linha = max(1, int(largura_pt / largura_char))
     trechos = str(texto).replace("\r\n", "\n").replace("\r", "\n").split("\n")
-    total = sum(max(1, math.ceil(len(trecho) / caracteres_por_linha)) for trecho in trechos)
+    total = sum(_simular_linhas_quebra_palavra(trecho, caracteres_por_linha) for trecho in trechos)
     return max(1, total)
+
+
+def _simular_linhas_quebra_palavra(trecho, caracteres_por_linha):
+    """Empacota as palavras de `trecho` em linhas de até
+    `caracteres_por_linha` caracteres, uma palavra de cada vez — a
+    mesma lógica de quebra automática do Excel (nunca quebra no meio de
+    uma palavra). Uma única palavra maior que `caracteres_por_linha`
+    ocupa a linha sozinha (não força mais de uma linha por si só nesta
+    aproximação)."""
+    palavras = trecho.split(" ")
+    linhas = 1
+    ocupado_na_linha = 0
+    for palavra in palavras:
+        tamanho = len(palavra)
+        if ocupado_na_linha == 0:
+            ocupado_na_linha = tamanho
+        elif ocupado_na_linha + 1 + tamanho <= caracteres_por_linha:
+            ocupado_na_linha += 1 + tamanho
+        else:
+            linhas += 1
+            ocupado_na_linha = tamanho
+    return max(1, linhas)
 
 
 def estimar_altura_calculada(texto, largura_total_colunas, tamanho_fonte):

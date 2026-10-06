@@ -18,7 +18,7 @@ import unicodedata
 
 import openpyxl
 import pandas as pd
-import pyreadstat
+from core.pyreadstat_seguro import pyreadstat
 import streamlit as st
 
 from core.config import ROTULOS_VARIAVEIS, VARIAVEIS_EXCLUSAO_PADRAO, _rotulo_amigavel

@@ -25,7 +25,7 @@ LIMIAR_REVISAO = 0.85  # casos abaixo disso entram na tabela "pra revisar"
 
 
 def _ler_sav_temp(uploaded_file):
-    import pyreadstat
+    from core.pyreadstat_seguro import pyreadstat
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".sav") as tmp:
         tmp.write(uploaded_file.getvalue())

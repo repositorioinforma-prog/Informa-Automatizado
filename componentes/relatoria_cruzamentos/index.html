@@ -1,0 +1,1098 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="versao-tela" content="17"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Cruzamentos</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700;900&display=swap"/>
+  <style>
+    /* Integrada à página do Streamlit: SEM altura fixa e SEM rolagem interna —
+       a área cresce com o conteúdo e quem rola é a própria página. */
+    html,body{margin:0;font-family:"Source Sans Pro","Source Sans 3",system-ui,Arial,sans-serif;background:#fff;}
+    .app{display:grid;grid-template-columns:minmax(560px,46%) 1fr;align-items:start}
+    .panel{border-right:1px solid #eee;padding:4px 16px 16px 2px;background:#fff}
+    h1{font-size:18px;margin:0 0 12px}
+    h2{font-size:14px;margin:16px 0 8px}
+    label{font-size:13px;display:block;margin:8px 0 6px}
+    small{color:#666;font-size:12px}
+    button,input[type="number"],textarea,input[type="text"]{
+      font:inherit;padding:8px 10px;border-radius:10px;border:1px solid #ddd;background:#fff
+    }
+    button{cursor:pointer}
+    .btn-primary{background:#1E90FF;border-color:#1E90FF;color:#fff}
+    .btn-outline{background:#fff;color:#111;border-color:#ccc}
+    .btn-sm{padding:6px 8px;border-radius:10px;font-size:12px}
+    .inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .muted{color:#666;font-size:12px}
+    .box{border:1px solid #eee;border-radius:14px;padding:10px 10px 8px;background:#fafafa;margin-bottom:10px;}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+    .stack{display:grid;gap:10px}
+    .actionsRow{display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+    @media (max-width: 980px){
+      .grid2,.grid3{grid-template-columns:1fr;}
+      .actionsRow{justify-content:flex-start}
+    }
+
+    .list{
+      border:1px solid #ddd;border-radius:12px;background:#fff;max-height:360px;overflow:auto;padding:6px;
+    }
+    .item{display:flex;gap:8px;align-items:center;padding:6px;border-radius:10px}
+    .item:hover{background:#f4f6fb}
+    .item.is-checked{background:#ecfdf3;box-shadow:inset 3px 0 0 #16a34a}
+    .item .lab{font-weight:900;font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+
+    /* Marcar tudo (verde) / Desmarcar (vermelho) */
+    .btn-green{background:#16a34a;border-color:#16a34a;color:#fff;font-weight:700}
+    .btn-green:hover{background:#15803d}
+    .btn-red{background:#dc2626;border-color:#dc2626;color:#fff;font-weight:700}
+    .btn-red:hover{background:#b91c1c}
+    .cnt{display:inline-block;min-width:18px;margin-left:6px;padding:1px 7px;border-radius:999px;
+         background:#fff;color:#15803d;font-weight:900;font-size:11px;text-align:center}
+    .selMsg{font-size:12px;margin-top:6px}
+    .selMsg.ok{color:#15803d}
+    .selMsg.warn{color:#b45309}
+    .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+    .chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:4px 8px;border-radius:999px;
+          background:#ecfdf3;border:1px solid #bbf7d0;color:#14532d;font-size:12px;font-weight:700}
+    .chip span{white-space:normal;overflow-wrap:anywhere}
+    .chip b{cursor:pointer;color:#b91c1c;font-weight:900}
+    .selFull{margin-top:6px;font-size:12px;font-weight:800;color:#1e3a8a;background:#eff6ff;border:1px solid #dbeafe;
+             border-radius:10px;padding:6px 8px;white-space:normal;overflow-wrap:anywhere}
+    .selFull:empty{display:none}
+    .autoNote{margin-top:8px;font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;
+              border-radius:10px;padding:6px 10px}
+    .btn-inqueue{background:#16a34a !important;border-color:#16a34a !important;color:#fff !important}
+    .item input{width:auto}
+    .pill{padding:4px 8px;border-radius:999px;background:#fff;border:1px solid #e6e6e6;font-weight:700;cursor:help;white-space:nowrap}
+    .sep{height:1px;background:#eee;margin:10px 0}
+
+    .content{padding:4px 2px 16px 16px;background:#fff;min-width:0}
+    .card{border:1px solid #eee;border-radius:14px;padding:12px;background:#fff;margin-bottom:12px}
+    .cardHead{display:flex;gap:10px;justify-content:space-between;align-items:center;flex-wrap:wrap}
+    .cardTitleWrap{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:340px;flex:1}
+    .cardTitleLabel{font-weight:900;font-size:13px;white-space:normal;overflow-wrap:anywhere;flex-basis:100%}
+    .titleInput{
+      flex:1; min-width:240px;
+      padding:8px 10px;border-radius:10px;border:1px solid #ddd;
+      font:inherit;
+    }
+    .tableWrap{overflow:auto;border:1px solid #eee;border-radius:12px;margin-top:10px}
+    table{border-collapse:collapse;min-width:100%;background:#fff}
+    th,td{border:1px solid #eee;padding:10px 10px;text-align:center;vertical-align:middle;font-size:12px;white-space:nowrap}
+    th{background:#f6f6f6;font-weight:900}
+    td.rowlab,th.rowlab{text-align:left;font-weight:900;background:#fafafa;position:sticky;left:0;z-index:2}
+    th.rowlab{z-index:3}
+    tr.baseRow td, tr.baseRow th{background:#fafafa;font-weight:900}
+    .num{font-variant-numeric: tabular-nums;}
+
+    input:focus, textarea:focus, button:focus{outline:none !important;box-shadow:none !important;}
+
+    .dd{position:relative;}
+    .dd-btn{
+      width:100%;text-align:left;padding:10px 10px;border-radius:12px;border:1px solid #ddd;background:#fff;
+      cursor:pointer;font:inherit;display:flex;align-items:center;justify-content:space-between;gap:10px;
+    }
+    .dd-btn:disabled{opacity:.6;cursor:not-allowed}
+    .dd-arrow{color:#666;font-size:12px}
+    .dd-menu{
+      position:absolute; left:0; right:0; top:calc(100% + 6px);
+      background:#fff;border:1px solid #ddd;border-radius:12px;max-height:280px;overflow:auto;
+      box-shadow:0 12px 28px rgba(0,0,0,.10);z-index:2000;
+    }
+    .dd-item{padding:10px 10px;cursor:pointer;font-size:13px;color:#111;user-select:none;white-space:normal;overflow-wrap:anywhere}
+    .dd-item:hover{background:#f2f2f2}
+    .dd-item.is-selected{background:#1E90FF; color:#fff; font-weight:900;}
+
+    .combo{position:relative;}
+    .combo input{
+      box-sizing:border-box;
+      width:100%;padding:10px 10px;border-radius:12px;border:1px solid #ddd;background:#fff;font:inherit;
+    }
+    .combo-menu{
+      position:absolute; left:0; right:0; top:calc(100% + 6px);
+      background:#fff;border:1px solid #ddd;border-radius:12px;max-height:360px;overflow:auto;
+      box-shadow:0 12px 28px rgba(0,0,0,.10);z-index:2100;
+    }
+    .combo-item{padding:10px 10px;cursor:pointer;font-size:13px;white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+    .combo-item:hover{background:#f2f2f2}
+    .combo-item.is-selected{background:#1E90FF;color:#fff;font-weight:900}
+
+    .modal-backdrop{
+      position:fixed; inset:0; background:rgba(0,0,0,.35);
+      display:none; align-items:flex-start; justify-content:center; z-index:3000;
+    }
+    .modal{
+      width:min(780px, 92vw);
+      max-height:min(640px, 86vh);
+      background:#fff; border-radius:16px; border:1px solid #eee;
+      box-shadow:0 20px 60px rgba(0,0,0,.25);
+      padding:14px;
+
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+    }
+    .modal h3{margin:0;font-size:14px}
+    .modal .rows{
+      border:1px solid #eee;border-radius:12px;
+      overflow:auto;
+      flex:1;
+      min-height:120px;
+    }
+    .modal .r{
+      display:flex; align-items:center; justify-content:space-between;
+      gap:10px; padding:10px 10px; border-bottom:1px solid #f0f0f0;
+      background:#fff;
+    }
+    .modal .r:last-child{border-bottom:none}
+    .modal .name{font-weight:800;font-size:13px;flex:1;white-space:normal;overflow-wrap:anywhere}
+    .modal .tag{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;background:#fef3c7;color:#92400e;
+                font-size:11px;font-weight:700}
+    .modal .meta{color:#666;font-size:12px;white-space:nowrap}
+    .modal .actions{display:flex;gap:6px;flex-wrap:nowrap}
+    .modal .actions button{padding:6px 8px;border-radius:10px}
+    .modal .footer{display:flex;justify-content:flex-end;gap:8px}
+    .is-removed{opacity:.45;text-decoration:line-through}
+    .hintRow{
+      padding:10px 10px;
+      font-size:12px;
+      color:#666;
+      border-top:1px solid #f0f0f0;
+      background:#fff;
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel">
+    <!-- título já aparece no cabeçalho da página do Streamlit -->
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">0) Dados</h2>
+      <label>Importar Banco com peso do SPSS</label>
+      <div class="inline">
+        <button id="btnPickData" class="btn-outline">Carregar dados (CSV/XLSX/SAV)</button>
+        <small id="dataStatus" class="muted">Nenhum arquivo carregado.</small>
+      </div>
+
+      <div class="sep"></div>
+
+      <h2 style="margin:0 0 8px">1) Configurações das Variáveis</h2>
+      <div class="stack">
+        <div>
+          <label>Variável (Linhas)</label>
+          <div class="combo" id="rowCombo"></div>
+          <div id="rowSelFull" class="selFull"></div>
+          <small class="muted">Você pode rolar a lista ou digitar para buscar</small>
+        </div>
+        <div class="grid2">
+          <div>
+            <label>Peso</label>
+            <div class="dd" id="weightVarDD" data-placeholder="(Sem peso)"></div>
+            <small class="muted">Mostra somente colunas que contêm “peso”</small>
+          </div>
+          <div>
+            <label>Percentual</label>
+            <div class="dd" id="pctModeDD" data-placeholder="Coluna (%)"></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:10px">
+        <label>Buscar variável (Colunas)</label>
+        <input id="colSearch" type="text" placeholder="Digite para filtrar..." />
+        <div class="actionsRow" style="margin-top:8px">
+          <button id="btnAll" class="btn-green btn-sm" type="button">Marcar tudo<span id="selCount" class="cnt">0</span></button>
+          <button id="btnNone" class="btn-red btn-sm" type="button">Desmarcar</button>
+        </div>
+        <div id="selMsg" class="selMsg"></div>
+      </div>
+
+      <label>Variáveis (Colunas)</label>
+      <div id="colList" class="list"></div>
+      <div id="selChips" class="chips"></div>
+
+      <div class="inline" style="margin-top:10px">
+        <span class="pill"><input id="includeNA" type="checkbox" style="width:auto;margin:0"> Incluir NA</span>
+      </div>
+
+      <div class="inline" style="margin-top:12px">
+        <button id="btnRun" class="btn-primary" type="button">Gerar cruzamentos</button>
+        <button id="btnClear" class="btn-outline" type="button">Limpar resultados</button>
+        <small id="runStatus" class="muted"></small>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">2) Pilha de exportação</h2>
+      <div class="inline">
+        <button id="btnAddAllQueue" class="btn-outline" type="button">Adicionar todos à pilha</button>
+        <small id="queueStatus" class="muted">Pilha: 0 tabela(s)</small>
+      </div>
+      <small class="muted" style="display:block;margin-top:6px">
+        A pilha, o <b>Exportar Excel</b> e o <b>Limpar pilha</b> ficam na barra lateral, à esquerda.
+      </small>
+    </div>
+
+    <small class="muted">
+      Dica: gere os cruzamentos, edite título/ordem se quiser, e adicione à pilha para exportar tudo de uma vez.
+    </small>
+  </aside>
+
+  <main class="content">
+    <div id="results" class="muted">Nenhum resultado ainda.</div>
+  </main>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal">
+    <h3 id="modalTitle">Ordenar</h3>
+    <div class="rows" id="modalRows"></div>
+    <div class="footer">
+      <button class="btn-outline" id="btnModalCancel" type="button">Cancelar</button>
+      <button class="btn-primary" id="btnModalSave" type="button">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Ponte Streamlit no lugar do QWebChannel do Qt (ver componentes/ponte_qt.js) -->
+<script src="ponte_qt.js"></script>
+<script>
+  let QtBridge = null;
+  let __columns = [];
+  let __results = [];
+  let __queue = [];
+  let __varLabels = {};
+  let __selectedCols = new Set();
+  let __colSearchTimer = null;
+  let __lastColFilter = "";
+  let __queueSigs = new Set();
+
+  // Colunas que já vêm REMOVIDAS (podem ser restauradas em "Ordenar colunas")
+  const AUTO_REMOVE_MIN_BASE = 30;
+  const AUTO_REMOVE_LABELS = ["Branco/Nulo", "Não irá votar", "Não sabe"];
+
+  function esc(s){
+    return String(s ?? "").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+  function el(id){ return document.getElementById(id); }
+  function norm(s){ return String(s||"").normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(); }
+  function canon(s){ return norm(s).replace(/[^a-z0-9]+/g,' ').trim(); }
+  function isPeso(name){ return canon(name).includes("peso"); }
+  function dispVar(name){
+    return (__varLabels && __varLabels[name]) ? __varLabels[name] : name;
+  }
+  function sigOf(t){
+    return [t.row_var, t.col_var, t.weight_var || "", t.pct_mode || "col", t.include_na ? "1" : "0"].join("|");
+  }
+  const __autoLabelsCanon = new Set(AUTO_REMOVE_LABELS.map(x => canon(x)));
+  function autoRemoveReason(label, base){
+    if(__autoLabelsCanon.has(canon(label))) return "resposta";
+    const b = Number(base);
+    if(Number.isFinite(b) && b < AUTO_REMOVE_MIN_BASE) return "base < " + AUTO_REMOVE_MIN_BASE;
+    return "";
+  }
+
+  // Guarda TODAS as colunas originais da tabela, para poder restaurar depois
+  function prepTable(t){
+    if(t._cols_orig) return t;
+    const rows = t.row_labels || [];
+    t._cols_orig = (t.col_labels || []).map((lab, j)=>{
+      const vals = {};
+      rows.forEach((r, i)=>{ vals[r] = ((t.pct_matrix || [])[i] || [])[j]; });
+      return { label: lab, base_n: (t.base_col_n || [])[j], vals: vals,
+               auto: autoRemoveReason(lab, (t.base_col_n || [])[j]) };
+    });
+    let state = t._cols_orig.map((c, j)=>({ i: j, removed: !!c.auto }));
+    if(state.length && state.every(x => x.removed)){
+      // nunca deixar a tabela sem colunas
+      state = state.map(x => ({ i: x.i, removed: false }));
+    }
+    t._cols_state = state;
+    rebuildCols(t);
+    return t;
+  }
+  function rebuildCols(t){
+    const orig = t._cols_orig || [];
+    const active = (t._cols_state || []).filter(x => !x.removed);
+    t.col_labels = active.map(x => orig[x.i].label);
+    t.base_col_n = active.map(x => orig[x.i].base_n);
+    t.pct_matrix = (t.row_labels || []).map(r => active.map(x => orig[x.i].vals[r]));
+  }
+
+  function Dropdown(rootEl){
+    const placeholder = rootEl.dataset.placeholder || '—';
+    let items = [];
+    let value = '';
+    let enabled = true;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'dd-btn';
+    btn.innerHTML = `<span class="dd-text">${placeholder}</span><span class="dd-arrow">▼</span>`;
+
+    const menu = document.createElement('div');
+    menu.className = 'dd-menu';
+    menu.hidden = true;
+
+    rootEl.appendChild(btn);
+    rootEl.appendChild(menu);
+
+    function setText(t){ btn.querySelector('.dd-text').textContent = t || placeholder; }
+    function close(){ menu.hidden = true; }
+    function open(){ if(enabled && items.length) menu.hidden = false; }
+
+    function render(){
+      menu.innerHTML = '';
+      items.forEach(it=>{
+        const div = document.createElement('div');
+        div.className = 'dd-item' + (it.value===value ? ' is-selected' : '');
+        div.textContent = it.label;
+        div.addEventListener('click', ()=>{
+          value = it.value;
+          setText(it.label);
+          render();
+          close();
+          api.onChange && api.onChange(value);
+        });
+        menu.appendChild(div);
+      });
+    }
+
+    btn.addEventListener('click', ()=> menu.hidden ? open() : close());
+    document.addEventListener('click', (e)=>{ if(!rootEl.contains(e.target)) close(); });
+
+    const api = {
+      onChange: null,
+      setItems(arr){
+        items = Array.isArray(arr) ? arr.slice() : [];
+        value = '';
+        setText('');
+        render();
+        close();
+      },
+      setValue(v){
+        value = v || '';
+        const found = items.find(x => x.value === value);
+        setText(found ? found.label : '');
+        render();
+        close();
+      },
+      getValue(){ return value; },
+      setEnabled(v){
+        enabled = !!v;
+        btn.disabled = !enabled;
+        if(!enabled){ value=''; setText(''); close(); }
+      }
+    };
+    return api;
+  }
+
+  function ComboSearch(rootEl){
+    let items = [];
+    let value = '';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Digite para buscar...';
+    rootEl.appendChild(input);
+
+    const menu = document.createElement('div');
+    menu.className = 'combo-menu';
+    menu.hidden = true;
+    rootEl.appendChild(menu);
+
+    function close(){ menu.hidden = true; }
+    function open(){ if(items.length) menu.hidden = false; }
+
+    function render(){
+      const q = canon(input.value || '');
+      menu.innerHTML = '';
+      const filtered = items.filter(it => !q || canon(it.label).includes(q));
+      filtered.forEach(it=>{
+        const div = document.createElement('div');
+        div.className = 'combo-item' + (it.value===value ? ' is-selected' : '');
+        div.textContent = it.label;
+        div.addEventListener('click', ()=>{
+          value = it.value;
+          input.value = it.label;
+          input.title = it.label;
+          render();
+          close();
+          api.onChange && api.onChange(value);
+        });
+        menu.appendChild(div);
+      });
+    }
+
+    input.addEventListener('focus', ()=>{ open(); render(); });
+    input.addEventListener('click', ()=>{ open(); render(); });
+    input.addEventListener('input', ()=>{ open(); render(); });
+    document.addEventListener('click', (e)=>{ if(!rootEl.contains(e.target)) close(); });
+
+    const api = {
+      onChange: null,
+      setItems(arr){
+        items = Array.isArray(arr) ? arr.slice() : [];
+        value = '';
+        input.value = '';
+        render();
+        close();
+      },
+      setValue(v){
+        value = v || '';
+        const found = items.find(x => x.value === value);
+        input.value = found ? found.label : '';
+        render();
+      },
+      getValue(){ return value; },
+    };
+    return api;
+  }
+
+  let ddWeight = null;
+  let ddPct = null;
+  let comboRow = null;
+
+  function filteredColumns(filterText=""){
+    const ft = canon(filterText || "");
+    return __columns.filter(c => {
+      const label = dispVar(c.name);
+      return !ft || canon(label).includes(ft) || canon(c.name).includes(ft);
+    });
+  }
+
+  function renderColList(filterText=""){
+    const host = el("colList");
+    const frag = document.createDocumentFragment();
+    __lastColFilter = filterText || "";
+    host.innerHTML = "";
+
+    for(const c of filteredColumns(__lastColFilter)){
+      const label = dispVar(c.name);
+      const row = document.createElement("div");
+      row.className = "item" + (__selectedCols.has(c.name) ? " is-checked" : "");
+      row.title = label;
+      row.innerHTML = `<input type="checkbox" data-var="${esc(c.name)}" ${__selectedCols.has(c.name) ? "checked" : ""}>
+                       <div style="flex:1;min-width:0">
+                         <div class="lab">${esc(label)}</div>
+                         <div class="muted">${esc(c.name)} · ${esc(c.dtype)}</div>
+                       </div>`;
+      frag.appendChild(row);
+    }
+
+    host.appendChild(frag);
+    updateSelectionUI();
+  }
+
+  function updateSelectionUI(){
+    el("selCount").textContent = String(__selectedCols.size);
+    el("colList").querySelectorAll('input[type="checkbox"][data-var]').forEach(cb=>{
+      const on = __selectedCols.has(cb.dataset.var);
+      cb.checked = on;
+      const it = cb.closest(".item");
+      if(it) it.classList.toggle("is-checked", on);
+    });
+    const host = el("selChips");
+    host.innerHTML = "";
+    if(!__selectedCols.size) return;
+    const lab = document.createElement("div");
+    lab.className = "muted";
+    lab.style.width = "100%";
+    lab.textContent = `Selecionadas (${__selectedCols.size}):`;
+    host.appendChild(lab);
+    // na ordem do banco
+    __columns.filter(c => __selectedCols.has(c.name)).forEach(c=>{
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      chip.innerHTML = `<span>${esc(dispVar(c.name))}</span><b title="Desmarcar" data-unsel="${esc(c.name)}">×</b>`;
+      host.appendChild(chip);
+    });
+  }
+
+  function selMsg(txt, kind){
+    const m = el("selMsg");
+    m.className = "selMsg " + (kind || "");
+    m.textContent = txt || "";
+  }
+
+  function scheduleRenderColList(filterText=""){
+    if(__colSearchTimer) clearTimeout(__colSearchTimer);
+    __colSearchTimer = setTimeout(()=> renderColList(filterText || ""), 140);
+  }
+
+  function markAll(val){
+    const vis = filteredColumns(__lastColFilter);
+    let mudou = 0, ja = 0;
+    for(const c of vis){
+      if(val){
+        if(__selectedCols.has(c.name)) ja++;
+        else { __selectedCols.add(c.name); mudou++; }
+      } else if(__selectedCols.has(c.name)){
+        __selectedCols.delete(c.name); mudou++;
+      }
+    }
+    updateSelectionUI();
+    if(val){
+      if(!vis.length) selMsg("Nenhuma variável na lista para marcar.", "warn");
+      else if(!mudou) selMsg(`Todas as ${vis.length} variáveis da lista já estavam selecionadas.`, "warn");
+      else selMsg(`${mudou} variável(is) marcada(s)` + (ja ? ` — ${ja} já estavam selecionadas.` : ".") +
+                  ` Total selecionado: ${__selectedCols.size}.`, "ok");
+    } else {
+      selMsg(mudou ? `${mudou} variável(is) desmarcada(s). Total selecionado: ${__selectedCols.size}.`
+                   : "Nenhuma variável estava selecionada.", mudou ? "ok" : "warn");
+    }
+  }
+
+  function selectedCols(){
+    return Array.from(__selectedCols);
+  }
+
+  function fmtPct(x){
+    if(x == null || Number.isNaN(x)) return "";
+    return Number(x).toFixed(1).replace('.', ',');
+  }
+
+  function autoNoteHTML(t){
+    const orig = t._cols_orig || [];
+    const rem = (t._cols_state || []).filter(x => x.removed).map(x => orig[x.i]);
+    if(!rem.length) return "";
+    const nomes = rem.map(c => `${c.label} (${c.auto === "resposta" ? "resposta" : "base " + c.base_n})`).join(", ");
+    return `<div class="autoNote">⚠️ ${rem.length} coluna(s) removida(s): ${esc(nomes)}.
+      Para trazer de volta, use <b>Ordenar colunas → Restaurar</b>.</div>`;
+  }
+
+  function buildTableHTML(t){
+    let html = `<div class="card" data-key="${esc(t.key)}">
+      <div class="cardHead">
+        <div class="cardTitleWrap">
+          <div class="cardTitleLabel">${esc(t.row_var_display || t.row_var)} × ${esc(t.col_var_display || t.col_var)}</div>
+          <input class="titleInput" type="text" value="${esc(t.title)}" data-action="editTitle" />
+        </div>
+        <div class="inline">
+          <span class="pill">${esc(t.base_display)}</span>
+          <button class="btn-outline btn-sm" data-action="orderRows" type="button">Ordenar linhas</button>
+          <button class="btn-outline btn-sm" data-action="orderCols" type="button">Ordenar colunas</button>
+          ${__queueSigs.has(sigOf(t))
+            ? `<button class="btn-outline btn-sm btn-inqueue" data-action="addQueue" type="button" title="Este cruzamento já está na pilha">✓ Na pilha</button>`
+            : `<button class="btn-outline btn-sm" data-action="addQueue" type="button"
+            style="background:#1E90FF; border-color:#1E90FF; color:#fff;">
+            Adicionar à pilha
+          </button>`}
+          <button class="btn-outline btn-sm" data-action="exportOne" type="button">Exportar (1)</button>
+        </div>
+      </div>
+
+      ${autoNoteHTML(t)}
+      <div class="tableWrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="rowlab">Categoria</th>
+            <th>Total</th>`;
+
+    for(const c of t.col_labels) html += `<th>${esc(c)}</th>`;
+    html += `</tr></thead><tbody>`;
+
+    for(let i=0;i<t.row_labels.length;i++){
+      html += `<tr>
+        <td class="rowlab">${esc(t.row_labels[i])}</td>
+        <td class="num">${fmtPct(t.pct_total[i])}</td>`;
+
+      for(let j=0;j<t.col_labels.length;j++){
+        html += `<td class="num">${fmtPct(t.pct_matrix[i][j])}</td>`;
+      }
+      html += `</tr>`;
+    }
+
+    html += `<tr class="baseRow">
+      <td class="rowlab">Base</td>
+      <td class="num">${esc(t.base_total_n)}</td>`;
+    for(let j=0;j<t.col_labels.length;j++){
+      html += `<td class="num">${esc(t.base_col_n[j])}</td>`;
+    }
+    html += `</tr>`;
+
+    html += `</tbody></table></div></div>`;
+    return html;
+  }
+
+  function renderResults(){
+    const host = el("results");
+    if(!__results.length){
+      host.textContent = "Nenhum resultado ainda.";
+      return;
+    }
+    let html = "";
+    for(const t of __results) html += buildTableHTML(t);
+    host.innerHTML = html;
+  }
+
+  function renderSingleResult(tableKey){
+    const t = __results.find(x => x.key === tableKey);
+    if(!t) return;
+
+    const host = el("results");
+    const current = host.querySelector(`.card[data-key="${CSS.escape(tableKey)}"]`);
+    if(!current){
+      renderResults();
+      return;
+    }
+
+    const wrap = document.createElement("div");
+    wrap.innerHTML = buildTableHTML(t);
+    const nextCard = wrap.firstElementChild;
+    if(!nextCard){
+      renderResults();
+      return;
+    }
+    current.replaceWith(nextCard);
+  }
+
+  function renderQueueState(payloadJson){
+    const payload = JSON.parse(payloadJson);
+    __queue = payload.items || [];
+    __queueSigs = new Set(__queue.map(it => it.sig).filter(Boolean));
+    el("queueStatus").textContent = `Pilha: ${__queue.length} tabela(s)`;
+    if(__results.length) renderResults();
+
+    const host = el("queueList");
+    if(!host) return;
+    host.innerHTML = "";
+
+    __queue.forEach((it, idx)=>{
+      const row = document.createElement("div");
+      row.className = "inline";
+      row.style.justifyContent = "space-between";
+      row.style.gap = "10px";
+      row.style.padding = "6px 0";
+      row.style.borderBottom = "1px dashed #eee";
+
+      const txt = document.createElement("div");
+      txt.textContent = `${idx+1}. ${it.title}`;
+      txt.style.flex = "1";
+      txt.style.whiteSpace = "nowrap";
+      txt.style.overflow = "hidden";
+      txt.style.textOverflow = "ellipsis";
+
+      const btn = document.createElement("button");
+      btn.className = "btn-outline btn-sm";
+      btn.type = "button";
+      btn.textContent = "Remover";
+      btn.dataset.action = "removeQueue";
+      btn.dataset.index = String(idx);
+
+      row.appendChild(txt);
+      row.appendChild(btn);
+      host.appendChild(row);
+    });
+  }
+
+  // ===== MODAL =====
+  let __modalMode = null;
+  let __modalTableKey = null;
+  let __modalRowsArr = [];
+  let __modalCols = [];
+
+  function openModal(){
+    // a área não tem rolagem própria: abre o modal na parte que está visível na tela
+    const topo = (window.__areaVisivel ? window.__areaVisivel() : {topo:0, altura:window.innerHeight});
+    const m = el("modalBackdrop").querySelector(".modal");
+    m.style.maxHeight = Math.max(320, Math.min(640, topo.altura - 40)) + "px";
+    m.style.marginTop = Math.max(10, topo.topo + 20) + "px";
+    el("modalBackdrop").style.display = "flex";
+  }
+  function closeModal(){
+    el("modalBackdrop").style.display = "none";
+    __modalMode = null; __modalTableKey = null;
+    __modalRowsArr = []; __modalCols = [];
+  }
+
+  function applyOrderToTableRows(tableKey, newRowLabels){
+    const t = __results.find(x => x.key === tableKey);
+    if(!t) return;
+
+    const old = t.row_labels.slice();
+    const idxMap = new Map(old.map((lab, i)=>[lab, i]));
+
+    const newPctTotal = [];
+    const newPctMatrix = [];
+    newRowLabels.forEach(lab=>{
+      const i = idxMap.get(lab);
+      if(i == null) return;
+      newPctTotal.push(t.pct_total[i]);
+      newPctMatrix.push(t.pct_matrix[i]);
+    });
+
+    t.row_labels = newRowLabels.slice();
+    t.pct_total = newPctTotal;
+    t.pct_matrix = newPctMatrix;
+
+    renderSingleResult(tableKey);
+  }
+
+  function applyOrderToTableCols(tableKey, activeIdxs){
+    const t = __results.find(x => x.key === tableKey);
+    if(!t) return;
+
+    const newColLabels = activeIdxs.map(i => t.col_labels[i]);
+    const newBaseColN  = activeIdxs.map(i => t.base_col_n[i]);
+    const newPctMatrix = t.pct_matrix.map(row => activeIdxs.map(i => row[i]));
+
+    t.col_labels = newColLabels;
+    t.base_col_n = newBaseColN;
+    t.pct_matrix = newPctMatrix;
+
+    renderSingleResult(tableKey);
+  }
+
+  function openOrderRowsModal(table){
+    __modalMode = "rows";
+    __modalTableKey = table.key;
+    el("modalTitle").textContent = `Ordenar linhas: ${table.row_var_display || table.row_var} × ${table.col_var_display || table.col_var}`;
+
+    const totals = table.pct_total || [];
+    __modalRowsArr = (table.row_labels || []).map((lab, i)=>({
+      label: lab,
+      total: (totals[i] != null) ? Number(totals[i]) : null
+    }));
+
+    const hint = (table.fixed_bottom_labels || []).join(" → ");
+
+    function redraw(){
+      const host = el("modalRows");
+      host.innerHTML = "";
+
+      __modalRowsArr.forEach((obj, i)=>{
+        const r = document.createElement("div");
+        r.className = "r";
+        const meta = (obj.total == null) ? "" : `Total: ${fmtPct(obj.total)}`;
+        r.innerHTML = `
+          <div class="name">${esc(obj.label)}</div>
+          <div class="meta">${esc(meta)}</div>
+          <div class="actions">
+            <button class="btn-outline btn-sm" data-act="up" data-i="${i}">↑</button>
+            <button class="btn-outline btn-sm" data-act="down" data-i="${i}">↓</button>
+          </div>
+        `;
+        host.appendChild(r);
+      });
+
+      if(hint){
+        const h = document.createElement("div");
+        h.className = "hintRow";
+        h.textContent = `Sugestão: itens comuns no final: ${hint} (você pode mover se quiser)`;
+        host.appendChild(h);
+      }
+    }
+
+    el("modalRows").onclick = (ev)=>{
+      const btn = ev.target.closest("button[data-act]");
+      if(!btn) return;
+      const act = btn.dataset.act;
+      const i = parseInt(btn.dataset.i, 10);
+      if(!Number.isFinite(i)) return;
+
+      if(act === "up" && i > 0){
+        const tmp = __modalRowsArr[i-1];
+        __modalRowsArr[i-1] = __modalRowsArr[i];
+        __modalRowsArr[i] = tmp;
+        redraw();
+      }
+      if(act === "down" && i < __modalRowsArr.length-1){
+        const tmp = __modalRowsArr[i+1];
+        __modalRowsArr[i+1] = __modalRowsArr[i];
+        __modalRowsArr[i] = tmp;
+        redraw();
+      }
+    };
+
+    redraw();
+    openModal();
+  }
+
+  function openOrderColsModal(table){
+    __modalMode = "cols";
+    __modalTableKey = table.key;
+    el("modalTitle").textContent = `Ordenar/Remover colunas: ${table.row_var_display || table.row_var} × ${table.col_var_display || table.col_var}`;
+
+    prepTable(table);
+    __modalCols = (table._cols_state || []).map(x => ({
+      label: table._cols_orig[x.i].label,
+      base_n: table._cols_orig[x.i].base_n,
+      auto: table._cols_orig[x.i].auto,
+      removed: !!x.removed,
+      origIndex: x.i,
+    }));
+
+    function redraw(){
+      const host = el("modalRows");
+      host.innerHTML = "";
+
+      const lock = document.createElement("div");
+      lock.className = "r";
+      lock.innerHTML = `<div class="name">Total</div><div class="meta">Fixo na coluna B</div>`;
+      host.appendChild(lock);
+
+      __modalCols.forEach((col, i)=>{
+        const r = document.createElement("div");
+        r.className = "r" + (col.removed ? " is-removed" : "");
+        const baseTxt = (col.base_n != null) ? `Base: ${col.base_n}` : "";
+        const tag = col.auto ? `<span class="tag" title="Removida automaticamente">auto: ${esc(col.auto)}</span>` : "";
+        r.innerHTML = `
+          <div class="name">${esc(col.label)}${tag}</div>
+          <div class="meta">${esc(baseTxt)}</div>
+          <div class="actions">
+            <button class="btn-outline btn-sm" data-act="up" data-i="${i}" ${col.removed ? "disabled" : ""}>↑</button>
+            <button class="btn-outline btn-sm" data-act="down" data-i="${i}" ${col.removed ? "disabled" : ""}>↓</button>
+            <button class="btn-outline btn-sm" data-act="toggle" data-i="${i}">
+              ${col.removed ? "Restaurar" : "Remover"}
+            </button>
+          </div>
+        `;
+        host.appendChild(r);
+      });
+    }
+
+    el("modalRows").onclick = (ev)=>{
+      const btn = ev.target.closest("button[data-act]");
+      if(!btn) return;
+      const act = btn.dataset.act;
+      const i = parseInt(btn.dataset.i, 10);
+      if(!Number.isFinite(i)) return;
+
+      if(act === "toggle"){
+        __modalCols[i].removed = !__modalCols[i].removed;
+        redraw();
+        return;
+      }
+
+      if(__modalCols[i].removed) return;
+
+      if(act === "up" && i > 0){
+        let j = i - 1;
+        while(j >= 0 && __modalCols[j].removed) j--;
+        if(j >= 0){
+          const tmp = __modalCols[j];
+          __modalCols[j] = __modalCols[i];
+          __modalCols[i] = tmp;
+          redraw();
+        }
+      }
+      if(act === "down" && i < __modalCols.length-1){
+        let j = i + 1;
+        while(j < __modalCols.length && __modalCols[j].removed) j++;
+        if(j < __modalCols.length){
+          const tmp = __modalCols[j];
+          __modalCols[j] = __modalCols[i];
+          __modalCols[i] = tmp;
+          redraw();
+        }
+      }
+    };
+
+    redraw();
+    openModal();
+  }
+
+  function bindGlobalEvents(){
+
+    const required = ["btnPickData","btnRun","btnClear","colSearch","btnAll","btnNone",
+                      "btnAddAllQueue","selChips","selCount",
+                      "btnModalCancel","btnModalSave","results"];
+    for(const id of required){
+      if(!el(id)){
+        console.warn("Elemento não encontrado:", id);
+        return;
+      }
+    }
+
+    el("btnPickData").addEventListener("click", () => QtBridge.pickData());
+
+    el("btnRun").addEventListener("click", () => {
+      const rowVar = comboRow.getValue();
+      const weightVar = ddWeight.getValue() || "";
+      const pctMode = ddPct.getValue() || "col";
+      const includeNA = el("includeNA").checked;
+      const colVars = selectedCols();
+
+      if(!rowVar || !colVars.length){
+        alert("Selecione a variável de Linhas e ao menos uma variável de Colunas.");
+        return;
+      }
+
+      if(!weightVar){
+        const ok = confirm("Nenhum peso foi selecionado. O cruzamento será gerado sem ponderação. Deseja continuar?");
+        if(!ok) return;
+      }
+
+      el("runStatus").textContent = "Calculando...";
+      QtBridge.computeCrosstabs(rowVar, JSON.stringify(colVars), weightVar, includeNA, pctMode);
+      setTimeout(()=> el("runStatus").textContent = "", 900);
+    });
+
+    el("btnClear").addEventListener("click", () => {
+      __results = [];
+      el("results").textContent = "Nenhum resultado ainda.";
+      __selectedCols.clear();
+      renderColList(__lastColFilter);
+      selMsg("");
+      el("runStatus").textContent = "";
+    });
+
+    el("colSearch").addEventListener("input", (e)=> scheduleRenderColList(e.target.value || ""));
+    el("btnAll").addEventListener("click", ()=> markAll(true));
+    el("btnNone").addEventListener("click", ()=> markAll(false));
+
+    el("colList").addEventListener("change", (ev)=>{
+      const cb = ev.target.closest('input[type="checkbox"][data-var]');
+      if(!cb) return;
+      const v = cb.dataset.var || "";
+      if(!v) return;
+      if(cb.checked) __selectedCols.add(v);
+      else __selectedCols.delete(v);
+      selMsg("");
+      updateSelectionUI();
+    });
+
+    el("selChips").addEventListener("click", (ev)=>{
+      const b = ev.target.closest("b[data-unsel]");
+      if(!b) return;
+      __selectedCols.delete(b.dataset.unsel);
+      selMsg("");
+      updateSelectionUI();
+    });
+
+    el("btnAddAllQueue").addEventListener("click", ()=>{
+      if(!__results.length){ alert("Gere os cruzamentos primeiro."); return; }
+      QtBridge.addAllToQueue(JSON.stringify(__results));
+    });
+    if(el("btnClearQueue")) el("btnClearQueue").addEventListener("click", ()=> QtBridge.clearQueue());
+    if(el("btnExportQueue")) el("btnExportQueue").addEventListener("click", ()=> QtBridge.exportQueueExcel());
+
+    el("btnModalCancel").addEventListener("click", closeModal);
+    el("btnModalSave").addEventListener("click", ()=>{
+      if(!__modalTableKey || !__modalMode) return closeModal();
+
+      if(__modalMode === "rows"){
+        const newLabels = __modalRowsArr.map(x => x.label);
+        applyOrderToTableRows(__modalTableKey, newLabels);
+        closeModal();
+        return;
+      }
+
+      if(__modalMode === "cols"){
+        const active = __modalCols.filter(x => !x.removed);
+        if(!active.length){
+          alert("Você removeu todas as colunas. Deixe ao menos 1 coluna para salvar.");
+          return;
+        }
+        const t = __results.find(x => x.key === __modalTableKey);
+        if(t){
+          t._cols_state = __modalCols.map(x => ({ i: x.origIndex, removed: !!x.removed }));
+          rebuildCols(t);
+          renderSingleResult(__modalTableKey);
+        }
+        closeModal();
+        return;
+      }
+
+      closeModal();
+    });
+
+    el("results").addEventListener("click", (ev)=>{
+      const card = ev.target.closest(".card");
+      if(!card) return;
+      const key = card.dataset.key;
+      const t = __results.find(x => x.key === key);
+      if(!t) return;
+
+      const btnOrderR = ev.target.closest('button[data-action="orderRows"]');
+      if(btnOrderR){ openOrderRowsModal(t); return; }
+
+      const btnOrderC = ev.target.closest('button[data-action="orderCols"]');
+      if(btnOrderC){ openOrderColsModal(t); return; }
+
+      const btnAdd = ev.target.closest('button[data-action="addQueue"]');
+      if(btnAdd){ QtBridge.addToQueue(JSON.stringify(t)); return; }
+
+      const btnExp = ev.target.closest('button[data-action="exportOne"]');
+      if(btnExp){ QtBridge.exportSingleExcel(JSON.stringify(t)); return; }
+    });
+
+    el("results").addEventListener("input", (ev)=>{
+      const inp = ev.target.closest('input[data-action="editTitle"]');
+      if(!inp) return;
+      const card = ev.target.closest(".card");
+      if(!card) return;
+      const key = card.dataset.key;
+      const t = __results.find(x => x.key === key);
+      if(t) t.title = inp.value || t.title;
+    });
+
+    if(el("queueList")) el("queueList").addEventListener("click", (ev)=>{
+      const btn = ev.target.closest('button[data-action="removeQueue"]');
+      if(!btn) return;
+      const idx = parseInt(btn.dataset.index, 10);
+      if(Number.isFinite(idx)) QtBridge.removeQueueItem(idx);
+    });
+  }
+
+  function onDataLoaded(payloadJson){
+    const payload = JSON.parse(payloadJson);
+    __columns = payload.columns || [];
+    __varLabels = payload.labels || {};
+    el("dataStatus").textContent = payload.file_info || "Arquivo carregado.";
+
+    const names = __columns.map(c => c.name);
+
+    comboRow.setItems(names.map(n => ({value:n, label:dispVar(n)})));
+    el("rowSelFull").textContent = "";
+
+    const weightNames = names.filter(isPeso);
+    ddWeight.setItems(weightNames.map(n => ({value:n, label:dispVar(n)})));
+    ddWeight.setEnabled(weightNames.length > 0);
+    ddWeight.setValue("");
+
+    ddPct.setItems([
+      {value:"col", label:"Coluna (%)"},
+      {value:"row", label:"Linha (%)"},
+      {value:"total", label:"Total (%)"},
+    ]);
+    ddPct.setValue("col");
+
+    __selectedCols.clear();
+    selMsg("");
+    __lastColFilter = "";
+    el("colSearch").value = "";
+    renderColList("");
+
+    __results = [];
+    el("results").textContent = "Selecione variáveis e clique em Gerar cruzamentos.";
+  }
+
+  function onCrosstabsReady(payloadJson){
+    const payload = JSON.parse(payloadJson);
+    __results = (payload.tables || []).map(prepTable);
+    renderResults();
+  }
+
+  new QWebChannel(qt.webChannelTransport, function(channel){
+    QtBridge = channel.objects.QtBridge;
+
+    comboRow = ComboSearch(el("rowCombo"));
+    ddWeight = Dropdown(el("weightVarDD"));
+    ddPct = Dropdown(el("pctModeDD"));
+    comboRow.onChange = (v)=>{ el("rowSelFull").textContent = v ? "Linhas: " + dispVar(v) : ""; };
+
+    QtBridge.dataLoaded.connect(onDataLoaded);
+    QtBridge.crosstabsReady.connect(onCrosstabsReady);
+    QtBridge.queueState.connect(renderQueueState);
+
+    bindGlobalEvents();
+  });
+</script>
+</body>
+</html>

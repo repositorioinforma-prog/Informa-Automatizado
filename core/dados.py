@@ -5,7 +5,7 @@ import os
 import tempfile
 
 import pandas as pd
-import pyreadstat
+from core.pyreadstat_seguro import pyreadstat
 import streamlit as st
 
 

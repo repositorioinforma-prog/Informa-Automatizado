@@ -30,10 +30,16 @@ from core.planilha_utils import (
     linha_vazia_ate_coluna,
     largura_total_mesclagem,
     _simular_linhas_quebra_palavra,
+    altura_label_por_caracteres,
+    eh_label_de_tabela_coluna_a,
+    linhas_com_mesclagem_na_coluna_a,
+    altura_fixa_por_texto,
+    altura_label_celula,
 )
 from core.relatorio_automatizado_math import (
     aplicar_layout_basico_planilha,
     _ultima_linha_com_conteudo,
+    _com_wrap_text,
 )
 
 
@@ -224,16 +230,42 @@ def aplicar_codigo_09_total(ws):
     altura fixa (30/45), porque eles eram justamente capazes de deixar
     ``Masculino``, ``Feminino`` e outros termos curtos mais altos do que o
     necessário. Quebras manuais introduzidas pelo código 04 são respeitadas.
+
+    LABELS DA COLUNA A (regra fixa, pedido do Lucas): em linha de tabela
+    cuja coluna A tem uma label (não título, não pergunta, não mesclada),
+    a altura da label é por nº de caracteres — até 23 -> 15, até 46 -> 30,
+    até 69 -> 45... — e a célula ganha quebra de texto. Outras células de
+    texto da mesma linha só aumentam a altura se precisarem de mais linhas.
+
+    PRIORIDADE MÁXIMA: linha que contenha "Denominações Católicas" ou
+    "Denominações Evangélicas" (em qualquer coluna) fica com altura 15
+    (ver `ALTURAS_FIXAS_POR_TEXTO` em core/planilha_utils.py).
     """
     alterados = 0
     max_col = ws.max_column
     max_row = ws.max_row
+    linhas_mescladas_a = linhas_com_mesclagem_na_coluna_a(ws)
 
     for r in range(1, max_row + 1):
+        altura_texto = altura_fixa_por_texto(ws, r, max_col)
+        if altura_texto is not None:
+            if ws.row_dimensions[r].height != altura_texto:
+                ws.row_dimensions[r].height = altura_texto
+                alterados += 1
+            continue
+
         maior_altura = None
-        for c in range(1, max_col + 1):
+        linha_de_label = eh_label_de_tabela_coluna_a(ws, r, max_col, linhas_mescladas_a)
+        if linha_de_label:
+            cel_a = ws.cell(row=r, column=1)
+            if not (cel_a.alignment and cel_a.alignment.wrap_text):
+                cel_a.alignment = _com_wrap_text(cel_a.alignment, True)
+            maior_altura = altura_label_celula(ws, cel_a)
+        for c in range(2 if linha_de_label else 1, max_col + 1):
             cel = ws.cell(row=r, column=c)
             if cel.value in (None, ""):
+                continue
+            if linha_de_label and not isinstance(cel.value, str):
                 continue
             if not (cel.alignment and cel.alignment.wrap_text):
                 continue

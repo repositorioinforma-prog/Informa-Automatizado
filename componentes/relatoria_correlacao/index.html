@@ -1,0 +1,1086 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="versao-tela" content="2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Matriz de Correlação</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700;800&display=swap"/>
+  <!-- Ponte Streamlit no lugar do QWebChannel do Qt (ver componentes/ponte_qt.js) -->
+  <script src="ponte_qt.js"></script>
+
+  <style>
+    /* Integrada à página do Streamlit: SEM altura fixa e SEM rolagem interna —
+       quem rola é a página; a matriz acompanha a rolagem (ver "matriz visível"). */
+    html,body{margin:0;font-family:"Source Sans Pro","Source Sans 3",system-ui,Arial,sans-serif;background:#fff}
+    .app{display:grid;grid-template-columns:minmax(560px,44%) 1fr;align-items:start}
+    .panel{border-right:1px solid #eee;padding:4px 16px 16px 2px;background:#fff}
+    h1{font-size:18px;margin:0 0 12px}
+    h2{font-size:14px;margin:16px 0 8px}
+    label{font-size:13px;display:block;margin:8px 0 6px}
+    small{color:#666;font-size:12px}
+
+    button,input,select,textarea{
+      font:inherit;padding:8px 10px;border-radius:10px;border:1px solid #ddd;background:#fff
+    }
+    textarea{width:100%;box-sizing:border-box}
+    .btn-primary{background:#1E90FF;border-color:#1E90FF;color:#fff}
+    .btn-outline{background:#fff;color:#111;border-color:#ccc}
+    .btn-sm{padding:6px 8px;border-radius:10px;font-size:12px}
+
+    .inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .muted{color:#666;font-size:12px}
+    .box{border:1px solid #eee;border-radius:14px;padding:10px 10px 8px;background:#fafafa;margin-bottom:10px;}
+
+    .listbox{
+      border:1px solid #e6e6e6;border-radius:12px;background:#fff;
+      padding:6px; max-height:340px; overflow:auto;
+    }
+    .row{display:flex;align-items:center;gap:8px;padding:4px 4px}
+    .row input[type="checkbox"]{margin:0}
+    .row .lab{font-size:12px; white-space:normal; overflow-wrap:anywhere; line-height:1.35; flex:1; min-width:0;}
+    .row.is-checked{background:#ecfdf3;border-radius:8px;box-shadow:inset 3px 0 0 #16a34a}
+    .row .cnt{font-size:12px;color:#666;min-width:70px;text-align:right;font-variant-numeric: tabular-nums;}
+
+    .search{width:100%; box-sizing:border-box}
+
+    /* Chips */
+    .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+    .chip{
+      display:inline-flex;align-items:center;gap:6px;
+      border:1px solid #e6e6e6;background:#fff;border-radius:999px;
+      padding:4px 8px;font-size:12px;max-width:100%;
+    }
+    .chip .x{cursor:pointer;font-weight:800;color:#444}
+
+    /* Renomear list */
+    .renameList{border:1px solid #e6e6e6;border-radius:12px;background:#fff;padding:8px;max-height:420px;overflow:auto;}
+    .renameItem{display:grid;grid-template-columns:1fr;gap:4px;padding:8px 2px;border-bottom:1px solid #f2f2f2}
+    .renameItem:last-child{border-bottom:none}
+    .renameKey{font-size:11.5px;color:#64748b;font-weight:700;overflow-wrap:anywhere}
+    .renameInp{width:100%;box-sizing:border-box;font-size:12.5px;resize:vertical;min-height:34px;line-height:1.35;
+               font-family:inherit;overflow-wrap:anywhere}
+
+    /* Área da tabela */
+    #main{background:#fff;display:flex;flex-direction:column;min-width:0;will-change:transform}
+    #headerbar{padding:10px 12px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+    #title{font-weight:800;font-size:14px;color:#111;margin:0;}
+    #subtitle{font-size:12px;color:#666;overflow-wrap:anywhere;}
+    #tableWrap{overflow-x:auto;padding:12px;}
+
+    table{border-collapse:separate;border-spacing:0;font-size:12px;min-width:720px;}
+    th, td{border:1px solid #e6e6e6;padding:6px 8px;background:#fff;text-align:center;font-variant-numeric: tabular-nums;}
+    th{font-weight:800;position:sticky;top:0;z-index:5;background:#f7f7f7;}
+    td.firstcol, th.firstcol{position:sticky;left:0;z-index:6;background:#f7f7f7;font-weight:800;text-align:left;}
+    td.val{min-width:78px;}
+    td.blank{background:#fff;color:#fff;}
+
+    .badge{font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid #e6e6e6;background:#fff;white-space:nowrap;}
+
+    /* 4) Todos (verde, com contador) / Nenhum (vermelho) */
+    .btn-green{background:#16a34a;border-color:#16a34a;color:#fff;font-weight:700}
+    .btn-green:hover{background:#15803d}
+    .btn-red{background:#dc2626;border-color:#dc2626;color:#fff;font-weight:700}
+    .btn-red:hover{background:#b91c1c}
+    .cnt-btn{display:inline-block;min-width:16px;margin-left:6px;padding:0 6px;border-radius:999px;background:#fff;
+             color:#15803d;font-weight:900;font-size:11px;text-align:center}
+    .selMsg{font-size:12px;margin-top:6px}
+    .selMsg:empty{display:none}
+    .selMsg.ok{color:#15803d}
+    .selMsg.warn{color:#b45309}
+    .full{margin-top:6px;font-size:12px;font-weight:700;color:#1e3a8a;background:#eff6ff;border:1px solid #dbeafe;
+          border-radius:10px;padding:6px 8px;overflow-wrap:anywhere}
+    .full:empty{display:none}
+    .hint-ok{color:#15803d !important;font-weight:700}
+  </style>
+</head>
+
+<body>
+<div class="app">
+  <aside class="panel">
+    <!-- título já aparece no cabeçalho da página do Streamlit -->
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">0) Dados</h2>
+      <label>Importar Banco</label>
+      <div class="inline">
+        <button id="btnPickData" class="btn-outline" type="button">Importar CSV/XLSX/SAV</button>
+        <small id="dataStatus" class="muted"></small>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">1) Peso (obrigatório)</h2>
+      <label>Variável de peso</label>
+      <select id="weightVar" style="max-width:100%"></select>
+      <small class="muted" id="weightHint">Mostra primeiro colunas que contêm “peso”.</small>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">2) Selecionar colunas</h2>
+      <small class="muted">Selecione as variáveis numéricas para compor a matriz.</small>
+
+      <div class="inline" style="margin-top:10px; justify-content:space-between">
+        <div class="inline">
+          <button id="btnAll" class="btn-green btn-sm" type="button">Todos<span id="cntAll" class="cnt-btn">0</span></button>
+          <button id="btnNone" class="btn-red btn-sm" type="button">Nenhum</button>
+        </div>
+        <span class="badge" id="badgeCount">0 selecionadas</span>
+      </div>
+
+      <div id="colsMsg" class="selMsg"></div>
+      <input id="searchCols" class="search" type="text" placeholder="Buscar..." style="margin-top:10px"/>
+      <div id="colsList" class="listbox" style="margin-top:8px"></div>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">3) Missing (por variável selecionada)</h2>
+      <small class="muted">Aqui aparecem SOMENTE as variáveis que você marcou em “Selecionar colunas”.</small>
+
+      <label style="margin-top:10px">Variável (selecionada)</label>
+      <div class="inline">
+        <select id="missingVar" style="flex:1;min-width:220px;max-width:100%"></select>
+        <button id="btnLoadVals" class="btn-outline btn-sm" type="button">Carregar valores</button>
+      </div>
+      <div id="missingVarFull" class="full"></div>
+
+      <div class="inline" style="margin-top:8px;justify-content:space-between">
+        <div class="inline">
+          <button id="btnMissAll" class="btn-green btn-sm" type="button">Todos<span id="cntMiss" class="cnt-btn">0</span></button>
+          <button id="btnMissNone" class="btn-red btn-sm" type="button">Nenhum</button>
+          <button id="btnAddMissing" class="btn-primary btn-sm" type="button">Adicionar missing</button>
+          <button id="btnClearMissingVar" class="btn-outline btn-sm" type="button">Limpar desta variável</button>
+        </div>
+        <span class="badge" id="missMeta">—</span>
+      </div>
+
+      <input id="missingSearch" class="search" type="text" placeholder="Buscar valor..." style="margin-top:10px"/>
+      <div id="missingValuesList" class="listbox" style="margin-top:8px"></div>
+
+      <label style="margin-top:10px">Missing aplicado nesta variável</label>
+      <div id="missingChips" class="chips"></div>
+
+      <label style="margin-top:10px">Missing manual (opcional, global)</label>
+      <input id="missingVals" type="text" placeholder="Ex.: 98, 99, Não sei, Branco/Nulo" />
+      <small class="muted">Esse campo é um “extra” (aplica em todas as variáveis).</small>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">4) Nomes (edição dinâmica)</h2>
+      <small class="muted">Você pode renomear aqui OU dar 2 cliques no cabeçalho da tabela (estilo Excel).</small>
+
+      <div class="inline" style="margin-top:8px">
+        <label style="display:flex;gap:8px;align-items:center;margin:0;font-size:12px;color:#333">
+          <input id="chkUseSpssLabels" type="checkbox" checked />
+          Usar rótulos do SPSS (inicial)
+        </label>
+      </div>
+
+      <label style="margin-top:10px">Variáveis selecionadas</label>
+      <div id="renameList" class="renameList"></div>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">5) Configurações e cálculo</h2>
+
+      <label>Método</label>
+      <select id="method">
+        <option value="pearson">Pearson</option>
+        <option value="spearman">Spearman</option>
+        <option value="kendall">Kendall</option>
+      </select>
+      <small class="muted">Obs.: Kendall com peso vira “sem ponderação”.</small>
+
+      <label style="margin-top:10px">Casas decimais</label>
+      <input id="decimals" type="number" min="0" max="10" step="1" value="3" style="width:120px"/>
+
+      <div class="inline" style="margin-top:8px">
+        <label style="display:flex;gap:8px;align-items:center;margin:0;font-size:12px;color:#333">
+          <input id="chkConvert" type="checkbox" checked />
+          Tentar converter texto em número
+        </label>
+      </div>
+
+      <div class="inline" style="margin-top:10px">
+        <button id="btnCalc" class="btn-primary" type="button">Calcular</button>
+        <small id="calcStatus" class="muted"></small>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">6) Exportar</h2>
+      <div class="inline" style="margin-top:8px">
+        <button id="btnExportCsv" class="btn-outline" type="button">Exportar CSV</button>
+        <button id="btnExportXlsx" class="btn-primary" type="button">Exportar XLSX</button>
+        <small id="expStatus" class="muted"></small>
+      </div>
+      <small class="muted">XLSX sai com col=10, linha=40, fonte DIN 10 e cores do VBA.</small>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div id="headerbar">
+      <div style="min-width:0">
+        <div id="title">Matriz de correlação</div>
+        <div id="subtitle">Carregue uma base e clique em Calcular.</div>
+      </div>
+      <span class="badge" id="badgeMeta">—</span>
+    </div>
+    <div id="tableWrap">
+      <div class="muted">Nada para mostrar ainda.</div>
+    </div>
+  </main>
+</div>
+
+<script>
+  window.QtBridge = null;
+  new QWebChannel(qt.webChannelTransport, function(channel){
+    window.QtBridge = channel.objects.QtBridge;
+  });
+
+  function el(id){ return document.getElementById(id); }
+
+  // colunas numéricas (candidatas)
+  let __allCols = [];
+  let __selected = new Set();
+
+  // labels base (SPSS / inicial) por variável original
+  let __baseLabel = {};   // var -> label inicial (ou var)
+  // label atual editável
+  let __dispMap = {};     // var -> label atual
+
+  let __weights = [];
+
+  // correlação em memória
+  let __corr = null;      // payload do python
+  let __vars = [];        // vars na ordem do cálculo (originais)
+  let __matrix = null;
+
+  // Missing guiado
+  let __missingRules = {};      // var -> Set(tokens)
+  let __uniqueCache = {};       // var -> payload de únicos
+  let __uniqueSelected = new Set();
+
+  function dispVar(varName){
+    return (__dispMap && __dispMap[varName]) ? __dispMap[varName] : ( (__baseLabel[varName]) ? __baseLabel[varName] : varName );
+  }
+
+  function updateBadge(){
+    el('badgeCount').textContent = `${__selected.size} selecionadas`;
+    el('cntAll').textContent = String(__selected.size);
+    document.querySelectorAll('#colsList .row').forEach(r=>{
+      const cb = r.querySelector('input[type="checkbox"]');
+      r.classList.toggle('is-checked', !!(cb && cb.checked));
+    });
+    salvarUi();
+  }
+  function msg(id, txt, tipo){ const m = el(id); m.className = 'selMsg ' + (tipo||''); m.textContent = txt || ''; }
+
+  // ---------------- 5) estado da tela guardado no Python (não perde ao trocar de ferramenta)
+  let __restaurando = false;
+  let __timerUi = null;
+  function salvarUi(){
+    if(__restaurando || !__allCols.length) return;
+    clearTimeout(__timerUi);
+    __timerUi = setTimeout(()=>{
+      const regras = {};
+      for(const k of Object.keys(__missingRules)) regras[k] = Array.from(__missingRules[k].values());
+      const estado = {
+        selected: Array.from(__selected), missingRules: regras, dispMap: __dispMap,
+        weightVar: el('weightVar').value || '', missingVar: el('missingVar').value || '',
+        missingVals: el('missingVals').value || '', method: el('method').value || 'pearson',
+        decimals: el('decimals').value, convert: !!el('chkConvert').checked,
+        useSpss: !!el('chkUseSpssLabels').checked,
+      };
+      window.QtBridge?.saveUiState?.(JSON.stringify(estado));
+    }, 900);
+  }
+  window.__restoreUiState = function(json){
+    let e = {};
+    try{ e = JSON.parse(json || '{}'); }catch{ return; }
+    __restaurando = true;
+    try{
+      if(Array.isArray(e.selected)) __selected = new Set(e.selected.filter(c => __allCols.includes(c)));
+      __missingRules = {};
+      Object.entries(e.missingRules || {}).forEach(([k, v])=>{ __missingRules[k] = new Set(v || []); });
+      Object.entries(e.dispMap || {}).forEach(([k, v])=>{ if(v) __dispMap[k] = v; });
+      renderWeights();
+      if(e.weightVar !== undefined) el('weightVar').value = e.weightVar;
+      atualizarHintPeso();
+      el('missingVals').value = e.missingVals || '';
+      if(e.method) el('method').value = e.method;
+      if(e.decimals !== undefined && e.decimals !== '') el('decimals').value = e.decimals;
+      if(typeof e.convert === 'boolean') el('chkConvert').checked = e.convert;
+      if(typeof e.useSpss === 'boolean') el('chkUseSpssLabels').checked = e.useSpss;
+      updateBadge();
+      renderCols();
+      refreshSelectedDependentUI();
+      if(e.missingVar && __selected.has(e.missingVar)){
+        el('missingVar').value = e.missingVar;
+        renderMissingChips(); renderUniqueValues(e.missingVar); mostrarMissingVarFull();
+      }
+    } finally {
+      __restaurando = false;
+    }
+  };
+
+  function renderCols(){
+    const box = el('colsList');
+    box.innerHTML = '';
+    const q = (el('searchCols').value || '').toLowerCase().trim();
+
+    const show = __allCols.filter(c => {
+      const dn = String(dispVar(c)).toLowerCase();
+      const vn = String(c).toLowerCase();
+      return !q || dn.includes(q) || vn.includes(q);
+    });
+
+    for(const c of show){
+      const row = document.createElement('div');
+      row.className = 'row' + (__selected.has(c) ? ' is-checked' : '');
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = __selected.has(c);
+      cb.addEventListener('change', ()=>{
+        if(cb.checked) __selected.add(c);
+        else __selected.delete(c);
+        msg('colsMsg', '');
+        updateBadge();
+        refreshSelectedDependentUI();
+      });
+
+      const lab = document.createElement('div');
+      lab.className = 'lab';
+      lab.textContent = dispVar(c);
+      lab.title = c;
+
+      row.appendChild(cb);
+      row.appendChild(lab);
+      box.appendChild(row);
+    }
+  }
+
+  function renderWeights(){
+    const sel = el('weightVar');
+    sel.innerHTML = '';
+
+    const opt0 = document.createElement('option');
+    opt0.value = '';
+    opt0.textContent = '— selecione o peso —';
+    sel.appendChild(opt0);
+
+    for(const w of (__weights || [])){
+      const op = document.createElement('option');
+      op.value = w;
+      op.textContent = dispVar(w);
+      sel.appendChild(op);
+    }
+
+    if((__weights || []).length === 1){
+      sel.value = __weights[0];
+    }
+
+    if(!(__weights || []).length){
+      for(const c of (__allCols || [])){
+        const op = document.createElement('option');
+        op.value = c;
+        op.textContent = dispVar(c);
+        sel.appendChild(op);
+      }
+      el('weightHint').textContent = 'Não achei colunas com “peso”. Mostrando todas para você escolher.';
+    } else {
+      el('weightHint').textContent = 'Mostra primeiro colunas que contêm “peso”.';
+    }
+    atualizarHintPeso();
+  }
+
+  function atualizarHintPeso(){
+    const w = el('weightVar').value || '';
+    const h = el('weightHint');
+    if(w && (__weights || []).length === 1 && w === __weights[0]){
+      h.textContent = `✓ Peso selecionado automaticamente: ${dispVar(w)} (única coluna com “peso”).`;
+      h.classList.add('hint-ok');
+    } else {
+      h.classList.remove('hint-ok');
+      h.textContent = (__weights || []).length ? 'Mostra primeiro colunas que contêm “peso”.'
+                                               : 'Não achei colunas com “peso”. Mostrando todas para você escolher.';
+    }
+  }
+
+  // o peso não entra como variável da matriz
+  function tirarPesoDasColunas(){
+    const w = el('weightVar').value || '';
+    if(w && __selected.has(w)){
+      __selected.delete(w);
+      updateBadge(); renderCols(); refreshSelectedDependentUI();
+      msg('colsMsg', `“${dispVar(w)}” é o peso — saiu da lista de colunas da matriz.`, 'warn');
+    }
+  }
+  el('weightVar').addEventListener('change', ()=>{ atualizarHintPeso(); tirarPesoDasColunas(); salvarUi(); });
+
+  function selectedArray(){
+    return Array.from(__selected.values());
+  }
+
+  // ---------------- Missing UI (somente selecionadas)
+  function renderMissingVarOptions(){
+    const sel = el('missingVar');
+    const prev = sel.value || '';
+
+    const sels = selectedArray();
+    sel.innerHTML = '';
+
+    if(!sels.length){
+      const op = document.createElement('option');
+      op.value = '';
+      op.textContent = '— selecione colunas abaixo —';
+      sel.appendChild(op);
+
+      el('missingValuesList').innerHTML = '<small class="muted">Selecione colunas em “Selecionar colunas”.</small>';
+      el('missMeta').textContent = '—';
+      el('missingChips').innerHTML = '<small class="muted">—</small>';
+      el('missingVarFull').textContent = '';
+      return;
+    }
+
+    for(const v of sels){
+      const op = document.createElement('option');
+      op.value = v;
+      op.textContent = dispVar(v);
+      sel.appendChild(op);
+    }
+
+    if(prev && sels.includes(prev)) sel.value = prev;
+    else sel.value = sels[0];
+
+    mostrarMissingVarFull();
+    renderMissingChips();
+    renderUniqueValues(sel.value || '');
+  }
+
+  function renderMissingChips(){
+    const varName = el('missingVar').value || '';
+    const box = el('missingChips');
+    box.innerHTML = '';
+    if(!varName){
+      box.innerHTML = '<small class="muted">—</small>';
+      return;
+    }
+
+    const set = (__missingRules[varName] || new Set());
+    if(!set.size){
+      box.innerHTML = '<small class="muted">Nenhum missing configurado.</small>';
+      return;
+    }
+
+    for(const token of Array.from(set.values())){
+      const chip = document.createElement('div');
+      chip.className = 'chip';
+      chip.title = token;
+
+      const label = document.createElement('span');
+      label.textContent = token === '__EMPTY__' ? '<vazio>' : token;
+
+      const x = document.createElement('span');
+      x.className = 'x';
+      x.textContent = '×';
+      x.addEventListener('click', ()=>{
+        set.delete(token);
+        __missingRules[varName] = set;
+        renderMissingChips();
+        salvarUi();
+      });
+
+      chip.appendChild(label);
+      chip.appendChild(x);
+      box.appendChild(chip);
+    }
+  }
+
+  function renderUniqueValues(varName){
+    const list = el('missingValuesList');
+    list.innerHTML = '';
+    __uniqueSelected = new Set();
+
+    const payload = __uniqueCache[varName];
+    if(!varName){
+      list.innerHTML = '<small class="muted">—</small>';
+      el('missMeta').textContent = '—';
+      return;
+    }
+
+    if(!payload || !payload.ok){
+      list.innerHTML = '<small class="muted">Clique em “Carregar valores”.</small>';
+      el('missMeta').textContent = '—';
+      return;
+    }
+
+    const q = (el('missingSearch').value || '').toLowerCase().trim();
+    const values = (payload.values || []).filter(v=>{
+      const d = String(v.display || '').toLowerCase();
+      const t = String(v.token || '').toLowerCase();
+      return !q || d.includes(q) || t.includes(q);
+    });
+
+    el('missMeta').textContent = `${payload.n_unique} únicos · mostrando ${values.length}`;
+    el('cntMiss').textContent = String(__uniqueSelected.size);
+
+    if(!values.length){
+      list.innerHTML = '<small class="muted">Nada encontrado.</small>';
+      return;
+    }
+
+    for(const v of values){
+      const row = document.createElement('div');
+      row.className = 'row';
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = __uniqueSelected.has(v.token);
+      if(cb.checked) row.classList.add('is-checked');
+      cb.addEventListener('change', ()=>{
+        if(cb.checked) __uniqueSelected.add(v.token);
+        else __uniqueSelected.delete(v.token);
+        row.classList.toggle('is-checked', cb.checked);
+        el('cntMiss').textContent = String(__uniqueSelected.size);
+      });
+
+      const lab = document.createElement('div');
+      lab.className = 'lab';
+      lab.textContent = v.display;
+      lab.title = v.token;
+
+      const cnt = document.createElement('div');
+      cnt.className = 'cnt';
+      cnt.textContent = String(v.count);
+
+      row.appendChild(cb);
+      row.appendChild(lab);
+      row.appendChild(cnt);
+      list.appendChild(row);
+    }
+  }
+
+  function loadUniqueValues(force=false){
+    const varName = el('missingVar').value || '';
+    if(!varName) return;
+
+    if(!force && __uniqueCache[varName] && __uniqueCache[varName].ok){
+      renderUniqueValues(varName);
+      return;
+    }
+
+    el('missingValuesList').innerHTML = '<small class="muted">Carregando valores...</small>';
+    el('missMeta').textContent = 'carregando...';
+
+    const req = { col: varName, max: 200 };
+    window.QtBridge?.getUniqueValues?.(JSON.stringify(req));
+  }
+
+  el('missingSearch').addEventListener('input', ()=>{
+    const varName = el('missingVar').value || '';
+    renderUniqueValues(varName);
+  });
+
+  function mostrarMissingVarFull(){
+    const v = el('missingVar').value || '';
+    el('missingVarFull').textContent = v ? dispVar(v) : '';
+  }
+  el('missingVar').addEventListener('change', ()=>{
+    renderMissingChips();
+    renderUniqueValues(el('missingVar').value || '');
+    mostrarMissingVarFull();
+    salvarUi();
+  });
+
+  el('btnLoadVals').addEventListener('click', ()=> loadUniqueValues(true));
+
+  el('btnMissAll').addEventListener('click', ()=>{
+    const varName = el('missingVar').value || '';
+    const payload = __uniqueCache[varName];
+    if(!payload || !payload.ok) return;
+
+    const todos = (payload.values || []).map(v=>v.token);
+    const marcados = new Set(__uniqueSelected);
+    renderUniqueValues(varName);
+    __uniqueSelected = new Set(todos);
+    document.querySelectorAll('#missingValuesList .row').forEach(r=>{
+      const cb = r.querySelector('input[type="checkbox"]'); cb.checked = true; r.classList.add('is-checked');
+    });
+    el('cntMiss').textContent = String(__uniqueSelected.size);
+    if(todos.length && todos.every(t => marcados.has(t))) el('missMeta').textContent = 'Todos os valores já estavam marcados.';
+  });
+
+  el('btnMissNone').addEventListener('click', ()=>{
+    __uniqueSelected = new Set();
+    document.querySelectorAll('#missingValuesList .row').forEach(r=>{
+      const cb = r.querySelector('input[type="checkbox"]'); cb.checked = false; r.classList.remove('is-checked');
+    });
+    el('cntMiss').textContent = '0';
+  });
+
+  el('btnAddMissing').addEventListener('click', ()=>{
+    const varName = el('missingVar').value || '';
+    if(!varName) return;
+    if(!__uniqueSelected.size) return;
+
+    const set = (__missingRules[varName] || new Set());
+    for(const t of __uniqueSelected.values()){
+      if(t === '__NA__') continue;
+      set.add(t);
+    }
+    __missingRules[varName] = set;
+    renderMissingChips();
+    salvarUi();
+  });
+
+  el('btnClearMissingVar').addEventListener('click', ()=>{
+    const varName = el('missingVar').value || '';
+    if(!varName) return;
+    __missingRules[varName] = new Set();
+    renderMissingChips();
+    salvarUi();
+  });
+
+  // ---------------- Renomear (somente selecionadas)
+  function updateLabelInDom(varName){
+    const label = dispVar(varName);
+    document.querySelectorAll(`[data-var="${CSS.escape(varName)}"]`).forEach(node=>{
+      // se estiver editando (tem input), não sobrescrever
+      if(node.querySelector && node.querySelector('input')) return;
+      node.textContent = label;
+    });
+
+    // também atualiza <option> dos selects (missingVar / weightVar) sem re-render geral
+    // (prático e rápido)
+    Array.from(el('missingVar').options).forEach(op=>{
+      if(op.value === varName) op.textContent = label;
+    });
+  }
+
+  function renderRenameList(){
+    const box = el('renameList');
+    box.innerHTML = '';
+
+    const sels = selectedArray();
+    if(!sels.length){
+      box.innerHTML = '<small class="muted">Selecione colunas primeiro.</small>';
+      return;
+    }
+
+    for(const v of sels){
+      const row = document.createElement('div');
+      row.className = 'renameItem';
+
+      const key = document.createElement('div');
+      key.className = 'renameKey';
+      key.textContent = v;
+      key.title = v;
+
+      const inp = document.createElement('textarea');
+      inp.className = 'renameInp';
+      inp.rows = 1;
+      inp.value = dispVar(v);
+      inp.placeholder = v;
+      const ajustar = ()=>{ inp.style.height = 'auto'; inp.style.height = (inp.scrollHeight + 2) + 'px'; };
+      inp.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); inp.blur(); } });
+
+      inp.addEventListener('input', ()=>{
+        const nv = (inp.value || '').replace(/\s*\n\s*/g, ' ').trim();
+        __dispMap[v] = nv ? nv : (__baseLabel[v] || v);
+        updateLabelInDom(v);
+        mostrarMissingVarFull();
+        ajustar();
+        salvarUi();
+      });
+      requestAnimationFrame(ajustar);
+
+      row.appendChild(key);
+      row.appendChild(inp);
+      box.appendChild(row);
+    }
+  }
+
+  // chamado quando muda seleção (colunas) -> atualiza MissingVar e Renomear list
+  function refreshSelectedDependentUI(){
+    renderMissingVarOptions();
+    renderRenameList();
+  }
+
+  // ---------------- Tabela
+  function fmt(v, decimals){
+    if(v === null || v === undefined || !isFinite(v)) return '—';
+    const d = Math.max(0, Math.min(10, Number(decimals)||3));
+    return Number(v).toFixed(d);
+  }
+
+  function rgb(r,g,b){ return `rgb(${r},${g},${b})`; }
+
+  function corrStyle(v){
+    if(v === null || v === undefined || !isFinite(v)) return null;
+    if(Math.abs(v - 1) < 1e-12) return null;
+
+    if(v <= -0.5) return { bg: rgb(190, 80, 20),  fg: rgb(255,255,255) };
+    if(v <= -0.4) return { bg: rgb(241,169,131), fg: rgb(190, 80, 20) };
+    if(v <= -0.3) return { bg: rgb(247,199,172), fg: rgb(190, 80, 20) };
+    if(v <= -0.2) return { bg: rgb(251,226,213), fg: rgb(190, 80, 20) };
+
+    if(v >=  0.5) return { bg: rgb(16, 72, 97),  fg: rgb(255,255,255) };
+    if(v >=  0.4) return { bg: rgb(68,179,225), fg: rgb(16, 72, 97) };
+    if(v >=  0.3) return { bg: rgb(131,204,235), fg: rgb(16, 72, 97) };
+    if(v >=  0.2) return { bg: rgb(192,230,245), fg: rgb(16, 72, 97) };
+
+    return null;
+  }
+
+  function startInlineEdit(node, varName){
+    if(!node) return;
+    if(node.querySelector && node.querySelector('input')) return;
+
+    const old = dispVar(varName);
+    node.textContent = '';
+
+    const inp = document.createElement('input');
+    inp.type = 'text';
+    inp.value = old;
+    inp.style.width = '100%';
+    inp.style.boxSizing = 'border-box';
+    inp.style.fontSize = '12px';
+    inp.style.padding = '4px 6px';
+    inp.style.borderRadius = '8px';
+    inp.style.border = '1px solid #ccc';
+
+    const commit = (apply=true)=>{
+      const nv = (inp.value || '').trim();
+      if(apply){
+        __dispMap[varName] = nv ? nv : (__baseLabel[varName] || varName);
+      }
+      node.textContent = dispVar(varName);
+      updateLabelInDom(varName);
+      mostrarMissingVarFull();
+      salvarUi();
+      // re-render renameList sem perder tudo? (não!)
+      // só atualiza o input correspondente se existir
+      document.querySelectorAll('.renameItem').forEach(item=>{
+        const key = item.querySelector('.renameKey');
+        const input = item.querySelector('input');
+        if(key && input && key.textContent === varName){
+          input.value = dispVar(varName);
+        }
+      });
+    };
+
+    inp.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter'){ e.preventDefault(); inp.blur(); }
+      if(e.key === 'Escape'){ e.preventDefault(); commit(false); }
+    });
+    inp.addEventListener('blur', ()=> commit(true));
+
+    node.appendChild(inp);
+    inp.focus();
+    inp.select();
+  }
+
+  function renderTable(payload){
+    const wrap = el('tableWrap');
+    wrap.innerHTML = '';
+
+    if(!payload || !payload.vars || !payload.matrix){
+      wrap.innerHTML = '<div class="muted">Nada para mostrar.</div>';
+      return;
+    }
+
+    const vars = payload.vars;
+    const mat = payload.matrix;
+    const decimals = payload.decimals;
+
+    __vars = vars.slice();
+    __matrix = mat;
+
+    const table = document.createElement('table');
+
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+
+    const th0 = document.createElement('th');
+    th0.className = 'firstcol';
+    th0.textContent = '';
+    hr.appendChild(th0);
+
+    vars.forEach(v=>{
+      const th = document.createElement('th');
+      th.textContent = dispVar(v);
+      th.setAttribute('data-var', v);
+      th.title = 'Duplo clique para renomear';
+      th.addEventListener('dblclick', ()=> startInlineEdit(th, v));
+      hr.appendChild(th);
+    });
+
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+
+    for(let i=0;i<vars.length;i++){
+      const tr = document.createElement('tr');
+
+      const td0 = document.createElement('td');
+      td0.className = 'firstcol';
+      td0.textContent = dispVar(vars[i]);
+      td0.setAttribute('data-var', vars[i]);
+      td0.title = 'Duplo clique para renomear';
+      td0.addEventListener('dblclick', ()=> startInlineEdit(td0, vars[i]));
+      tr.appendChild(td0);
+
+      for(let j=0;j<vars.length;j++){
+        const td = document.createElement('td');
+        td.className = 'val';
+
+        if(i > j){
+          td.textContent = '';
+          td.classList.add('blank');
+          td.style.background = '#fff';
+        } else {
+          const v = mat[i][j];
+          td.textContent = fmt(v, decimals);
+
+          const st = corrStyle(v);
+          if(st){
+            td.style.background = st.bg;
+            td.style.color = st.fg;
+            td.style.fontWeight = '700';
+          } else {
+            td.style.background = '#fff';
+            td.style.color = '#111';
+            td.style.fontWeight = '400';
+          }
+        }
+        tr.appendChild(td);
+      }
+
+      tbody.appendChild(tr);
+    }
+
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+  }
+
+  // ---------------- Eventos gerais
+  el('searchCols').addEventListener('input', renderCols);
+
+  el('btnAll').addEventListener('click', ()=>{
+    // "Todos" marca as colunas visíveis na busca (menos o peso)
+    const q = (el('searchCols').value || '').toLowerCase().trim();
+    const peso = el('weightVar').value || '';
+    const alvo = __allCols.filter(c => c !== peso &&
+      (!q || String(dispVar(c)).toLowerCase().includes(q) || String(c).toLowerCase().includes(q)));
+    const antes = __selected.size;
+    alvo.forEach(c=> __selected.add(c));
+    const novas = __selected.size - antes;
+    updateBadge();
+    renderCols();
+    refreshSelectedDependentUI();
+    if(!alvo.length) msg('colsMsg', 'Nenhuma coluna na lista para marcar.', 'warn');
+    else if(!novas) msg('colsMsg', `Todas as ${alvo.length} colunas da lista já estavam selecionadas.`, 'warn');
+    else msg('colsMsg', `${novas} coluna(s) marcada(s). Total selecionado: ${__selected.size}.` +
+                        (peso ? ' (o peso fica de fora)' : ''), 'ok');
+  });
+
+  el('btnNone').addEventListener('click', ()=>{
+    const n = __selected.size;
+    __selected = new Set();
+    updateBadge();
+    renderCols();
+    refreshSelectedDependentUI();
+    msg('colsMsg', n ? `${n} coluna(s) desmarcada(s).` : 'Nenhuma coluna estava selecionada.', n ? 'ok' : 'warn');
+  });
+
+  ['method','decimals','missingVals'].forEach(id => el(id).addEventListener('input', salvarUi));
+  ['method','chkConvert','chkUseSpssLabels'].forEach(id => el(id).addEventListener('change', salvarUi));
+
+  // ---------------- 1) matriz visível: acompanha a rolagem da página
+  function posicionarMatriz(){
+    const main = el('main');
+    if(!main) return;
+    const area = window.__areaVisivel ? window.__areaVisivel() : {topo:0, altura:innerHeight};
+    const app = document.querySelector('.app').getBoundingClientRect().height;
+    const alt = main.scrollHeight;
+    let y = 0;
+    if(alt <= area.altura) y = Math.max(0, Math.min(area.topo, app - alt));
+    main.style.transform = y ? `translateY(${Math.round(y)}px)` : '';
+  }
+  try{
+    window.parent.document.addEventListener('scroll', posicionarMatriz, true);
+    window.parent.addEventListener('resize', posicionarMatriz);
+  }catch(e){ /* sem acesso à página-mãe: a matriz fica no topo */ }
+  if(window.ResizeObserver) new ResizeObserver(posicionarMatriz).observe(document.body);
+
+  // Buttons
+  el('btnPickData').addEventListener('click', ()=> window.QtBridge?.pickData?.());
+
+  el('btnCalc').addEventListener('click', ()=>{
+    const method = el('method').value || 'pearson';
+    const decimals = Math.max(0, Math.min(10, Number(el('decimals').value)||3));
+    const convert = !!el('chkConvert').checked;
+
+    const weightVar = el('weightVar').value || '';
+    if(!weightVar){
+      el('calcStatus').textContent = 'Selecione o peso (obrigatório).';
+      return;
+    }
+
+    const cols = selectedArray();
+    if(cols.length < 2){
+      el('calcStatus').textContent = 'Selecione pelo menos 2 colunas.';
+      return;
+    }
+
+    // missing rules: var -> array tokens
+    const missingRulesObj = {};
+    for(const k of Object.keys(__missingRules)){
+      missingRulesObj[k] = Array.from(__missingRules[k].values());
+    }
+
+    const payload = {
+      cols,
+      weightVar,
+      missingVals: el('missingVals').value || '',
+      missingRules: missingRulesObj,
+      useSpssLabels: !!el('chkUseSpssLabels').checked,
+      method,
+      decimals,
+      convertText: convert,
+    };
+
+    el('calcStatus').textContent = 'Calculando...';
+    window.QtBridge?.computeCorr?.(JSON.stringify(payload));
+  });
+
+  el('btnExportCsv').addEventListener('click', ()=>{
+    if(!__vars.length || !__matrix){
+      el('expStatus').textContent = 'Calcule antes de exportar.';
+      return;
+    }
+    const names = __vars.map(v => dispVar(v));
+    window.QtBridge?.exportCorrCsv?.(JSON.stringify({ display: names }));
+  });
+
+  el('btnExportXlsx').addEventListener('click', ()=>{
+    if(!__vars.length || !__matrix){
+      el('expStatus').textContent = 'Calcule antes de exportar.';
+      return;
+    }
+    const names = __vars.map(v => dispVar(v));
+    window.QtBridge?.exportCorrXlsx?.(JSON.stringify({ display: names }));
+  });
+
+  // ---------------- Python -> JS
+  window.__setColumns = function(payloadJson){
+    try{
+      const data = JSON.parse(payloadJson);
+      el('dataStatus').textContent = data.label || '';
+
+      __allCols = data.columns || [];
+      __weights = data.weight_candidates || [];
+
+      // base labels
+      __baseLabel = {};
+      __dispMap = {};
+      const labels = data.labels || {};
+      for(const c of __allCols){
+        const lab = (labels[c] || '').trim();
+        __baseLabel[c] = lab ? lab : c;
+        __dispMap[c] = __baseLabel[c];
+      }
+
+      // pré-seleciona até 12 (sem as colunas de peso)
+      const semPeso = __allCols.filter(c => !(__weights || []).includes(c));
+      __selected = new Set(semPeso.slice(0, Math.min(semPeso.length, 12)));
+      updateBadge();
+      renderCols();
+      renderWeights();
+      msg('colsMsg', '');
+
+      // reset missing
+      __missingRules = {};
+      __uniqueCache = {};
+      __uniqueSelected = new Set();
+      el('missingSearch').value = '';
+      el('missingVals').value = '';
+      el('missingValuesList').innerHTML = '<small class="muted">Selecione uma variável (selecionada) e clique em “Carregar valores”.</small>';
+      el('missMeta').textContent = '—';
+
+      refreshSelectedDependentUI();
+
+      // reset tabela
+      __corr = null;
+      __vars = [];
+      __matrix = null;
+
+      el('calcStatus').textContent = '';
+      el('title').textContent = 'Matriz de correlação';
+      el('subtitle').textContent = 'Selecione colunas, missing e clique em Calcular.';
+      el('badgeMeta').textContent = '—';
+      el('tableWrap').innerHTML = '<div class="muted">Pronto para calcular.</div>';
+
+    }catch(e){ console.error(e); }
+  };
+
+  window.__setUniqueValues = function(payloadJson){
+    try{
+      const p = JSON.parse(payloadJson);
+      __uniqueCache[p.col] = p;
+      renderUniqueValues(p.col);
+    }catch(e){
+      console.error(e);
+      el('missingValuesList').innerHTML = '<small class="muted">Erro ao carregar valores.</small>';
+      el('missMeta').textContent = 'erro';
+    }
+  };
+
+  window.__setCorrResult = function(payloadJson){
+    try{
+      const r = JSON.parse(payloadJson);
+      if(!r.ok){
+        el('calcStatus').textContent = r.error || 'Erro ao calcular.';
+        return;
+      }
+      __corr = r;
+
+      // vars originais
+      const vars = r.vars || [];
+      const initialDisplay = r.cols_display || [];
+
+      // aplica labels iniciais retornados no cálculo (ex.: SPSS labels)
+      for(let i=0;i<vars.length;i++){
+        const v = vars[i];
+        const lab = (initialDisplay[i] || '').trim();
+        if(lab){
+          __baseLabel[v] = lab;
+          // só sobrescreve o dispMap se ainda estava “igual base antiga”
+          __dispMap[v] = __dispMap[v] ? __dispMap[v] : lab;
+          // se usuário não editou nada ainda, fica igual base
+          __dispMap[v] = (__dispMap[v] === v || __dispMap[v] === (__baseLabel[v] || v)) ? lab : __dispMap[v];
+        } else {
+          __baseLabel[v] = __baseLabel[v] || v;
+          __dispMap[v] = __dispMap[v] || __baseLabel[v];
+        }
+      }
+
+      el('calcStatus').textContent = 'Pronto.';
+      el('title').textContent = r.title || 'Matriz de correlação';
+      el('subtitle').textContent = r.subtitle || '';
+      el('badgeMeta').textContent = `${(r.method||'').toUpperCase()} · ${vars.length} vars`;
+
+      renderRenameList();
+      renderTable(r);
+
+    }catch(e){
+      console.error(e);
+      el('calcStatus').textContent = 'Erro ao receber resultado.';
+    }
+  };
+</script>
+</body>
+</html>

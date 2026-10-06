@@ -1,0 +1,1334 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="versao-tela" content="2" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mapa de Calor</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin=""/>
+
+  <style>
+    html,body{height:100%;margin:0;font-family:"Source Sans Pro","Source Sans 3",system-ui,Arial,sans-serif;}
+    .app{display:grid;grid-template-columns:minmax(520px,36%) 1fr;height:100%}
+    .panel{border-right:1px solid #eee;padding:14px 16px 16px;overflow:auto;background:#fff}
+    h1{font-size:18px;margin:0 0 12px}
+    h2{font-size:14px;margin:16px 0 8px}
+    label{font-size:13px;display:block;margin:8px 0 6px}
+    small{color:#666;font-size:12px}
+    input[type="file"],button,input[type="number"],select{
+      font:inherit;padding:8px 10px;border-radius:10px;border:1px solid #ddd;background:#fff
+    }
+    .btn-primary{background:#1E90FF;border-color:#1E90FF;color:#fff}
+    .btn-outline{background:#fff;color:#111;border-color:#ccc}
+    .btn-sm{padding:6px 8px;border-radius:10px;font-size:12px}
+    .inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .muted{color:#666;font-size:12px}
+
+    #map{height:100%;width:100%;background:#e9e9e9}
+    .leaflet-tile{filter:grayscale(1) brightness(1) contrast(1)}
+
+    .manual-row{display:flex; flex-direction: column; gap:8px; padding:16px 0; border-bottom:1px dashed #eee}
+    .manual-header{display:flex; align-items: center; justify-content: space-between; gap: 10px;}
+    .manual-name{font-size:13px; font-weight: 600; color: #333; flex: 1; white-space: normal; overflow-wrap:anywhere;}
+    .num{width:70px; text-align:center; border-radius:10px; border:1px solid #ddd; padding:6px 8px; font-weight:700; font-size:14px}
+
+    .box{
+      border:1px solid #eee;border-radius:14px;padding:10px 10px 8px;background:#fafafa;
+      margin-bottom:10px;
+    }
+    .stats{
+      display:flex; gap:10px; flex-wrap:wrap; font-size:12px; color:#333;
+      margin-top:8px;
+    }
+    .pill{
+      padding:4px 8px;border-radius:999px;background:#fff;border:1px solid #e6e6e6;
+      font-weight:700;
+      cursor: help;
+      white-space: nowrap;
+    }
+
+    /* Dropdown custom */
+    .dd{position:relative;}
+    .dd-btn{
+      width:100%;
+      text-align:left;
+      padding:10px 10px;
+      border-radius:12px;
+      border:1px solid #ddd;
+      background:#fff;
+      cursor:pointer;
+      font:inherit;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+    }
+    .dd-btn:disabled{opacity:.6;cursor:not-allowed}
+    .dd-arrow{color:#666;font-size:12px}
+    .dd-menu{
+      position:absolute;
+      left:0; right:0;
+      top:calc(100% + 6px);
+      background:#fff;
+      border:1px solid #ddd;
+      border-radius:12px;
+      max-height:260px;
+      overflow:auto;
+      box-shadow:0 12px 28px rgba(0,0,0,.10);
+      z-index:2000;
+    }
+    .dd-item{
+      padding:10px 10px;
+      cursor:pointer;
+      font-size:13px;
+      color:#111;
+      user-select:none;
+      white-space:normal;
+      overflow-wrap:anywhere;
+      line-height:1.35;
+    }
+    .dd-btn .dd-text{white-space:normal;overflow-wrap:anywhere;line-height:1.35}
+    .dd-item:hover{background:#f2f2f2}
+    .dd-item.is-selected{background:#ededed;font-weight:800}
+
+    .badge{
+      display:inline-flex;align-items:center;justify-content:center;
+      font-size:10px;font-weight:900;
+      padding:2px 6px;border-radius:999px;
+      border:1px solid #ddd;background:#fff;color:#333;
+      margin-left:6px;
+    }
+    .badge.manual{border-color:#cfd8ff;background:#eef2ff;color:#1b2a6b;}
+    .badge.auto{border-color:#d9d9d9;background:#f6f6f6;color:#333;}
+
+    input[type="color"]{
+      width: 34px; height: 34px; padding: 0; border: 1px solid #ddd; border-radius: 10px;
+      cursor: pointer; background: none;
+    }
+
+    #pptQueueList{white-space:pre-wrap; line-height:1.35}
+
+    /* Conferências (verde = ok, vermelho = faltou algo, amarelo = atenção) */
+    .check{margin-top:8px;border-radius:10px;padding:8px 10px;font-size:12.5px;line-height:1.45;border:1px solid}
+    .check:empty{display:none}
+    .check.ok{background:#ecfdf3;border-color:#bbf7d0;color:#14532d}
+    .check.erro{background:#fef2f2;border-color:#fecaca;color:#7f1d1d}
+    .check.aviso{background:#fffbeb;border-color:#fde68a;color:#78350f}
+    .check b{font-weight:800}
+    .check ul{margin:4px 0 0 18px;padding:0}
+    .check li{margin:1px 0}
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel">
+    <!-- título já aparece no cabeçalho da página do Streamlit -->
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">0) Excel (consulta)</h2>
+      <label>Importar Relatório Descritivo Quantitivo</label>
+      <div class="inline">
+        <button id="btnPickExcel" class="btn-outline">Importar Excel</button>
+        <small id="excelStatus" class="muted"></small>
+      </div>
+
+      <h2>1) KMLs</h2>
+      <label>Importar KML (vários):</label>
+      <input id="kmlInput" type="file" accept=".kml" multiple />
+      <div id="kmlCheck" class="check"></div>
+
+      <h2>2) Configurações Visuais</h2>
+      <div class="inline">
+        <label for="baseSelect" style="margin:0">Fundo:</label>
+        <select id="baseSelect">
+          <option value="osm">OSM</option>
+          <option value="esri" selected>Satélite (Esri) (padrão)</option>
+          <option value="none">Sem mapa</option>
+        </select>
+        <button id="btnToggleLabels" class="btn-outline">Ocultar números</button>
+      </div>
+
+      <div style="margin-top:10px">
+        <label style="margin:0 0 4px">Opacidade das cores (%)</label>
+        <div class="inline">
+          <input id="opacityRange" type="range" min="0" max="100" value="83" style="width:260px" />
+          <input id="opacityNumber" type="number" min="0" max="100" value="83" style="width:70px" />
+        </div>
+      </div>
+
+      <div style="margin-top:10px">
+        <label style="margin:0 0 4px">Espessura das bordas (px)</label>
+        <div class="inline">
+          <input id="borderRange" type="range" min="0" max="10" step="0.5" value="2" style="width:260px" />
+          <input id="borderNumber" type="number" min="0" max="10" step="0.5" value="2" style="width:70px" />
+        </div>
+      </div>
+
+      <div style="margin-top:10px">
+        <label style="margin:0 0 4px">Tamanho dos números (px)</label>
+        <div class="inline">
+          <input id="fontRange" type="range" min="10" max="80" step="1" value="28" style="width:260px" />
+          <input id="fontNumber" type="number" min="10" max="80" step="1" value="28" style="width:70px" />
+        </div>
+      </div>
+
+      <h2>3) Configurações dos casos e Segmentos</h2>
+      <label>Caso</label>
+      <div class="dd" id="caseDD" data-placeholder="—"></div>
+
+      <label>Segmento</label>
+      <div class="dd" id="segmentDD" data-placeholder="—"></div>
+
+      <label>Base (Total) (manual)</label>
+      <div class="inline">
+        <input id="baseOverride" type="number" min="1" step="1" placeholder="(vazio = usar base do Excel)" style="width:180px" />
+        <button id="btnUseExcelBase" class="btn-outline" type="button">Usar base do Excel</button>
+      </div>
+      <small id="excelBaseHint" class="muted"></small>
+      <div id="baseAlert" class="check"></div>
+
+      <div class="stats" id="statsRow" style="display:none">
+        <span class="pill" id="statMin">Mín: —</span>
+        <span class="pill" id="statMean">Média —</span>
+        <span class="pill" id="statMax">Máx: —</span>
+      </div>
+
+      <small class="muted">Passe o mouse nos pills para ver o detalhamento do cálculo (células/valores usados).</small>
+
+      <h2>4) Pintura do Mapa</h2>
+      <h3 style="margin:12px 0 6px;font-size:14px">Pintura automática</h3>
+
+      <div class="inline" style="margin:6px 0 8px">
+        <button id="btnApplyMap" class="btn-primary" type="button">Aplicar ao mapa</button>
+        <label style="display:flex;gap:8px;align-items:center;margin:0;font-size:12px;color:#333">
+          <input id="chkNoOverwriteManual" type="checkbox" checked />
+          Não sobrescrever pintura manual
+        </label>
+      </div>
+
+      <div class="box" style="background:#fff;margin-top:8px">
+        <div class="inline" style="justify-content:space-between; width:100%">
+          <div style="font-weight:780">Paleta ativa (automática)</div>
+          <div class="muted" id="paletteGroupHint">Grupo: —</div>
+        </div>
+
+        <div class="inline" style="margin-top:8px">
+          <div class="muted" style="font-weight:900;width:60px">Baixo</div>
+          <input id="palLow" type="color" value="#87cefa" title="Baixo">
+          <div class="muted" style="font-weight:900;width:60px;margin-left:10px">Médio</div>
+          <input id="palMid" type="color" value="#1e90ff" title="Médio">
+          <div class="muted" style="font-weight:900;width:60px;margin-left:10px">Alto</div>
+          <input id="palHigh" type="color" value="#121958" title="Alto">
+          <button id="btnResetPalette" class="btn-outline btn-sm" type="button" style="margin-left:8px">Restaurar padrão</button>
+        </div>
+
+        <div class="muted" id="autoPaintStatus" style="margin-top:10px">—</div>
+        <div id="paintCheck" class="check"></div>
+      </div>
+
+      <h2 style="margin:12px 0 6px;font-size:14px">PPTX (vários mapas)</h2>
+      <div class="inline" style="margin:6px 0 8px">
+        <button id="btnPickLogo" class="btn-outline" type="button">Carregar logo</button>
+        <small id="logoStatus" class="muted">Sem logo</small>
+      </div>
+
+
+      <div class="inline" style="margin:6px 0 8px">
+        <button id="btnAddToQueue" class="btn-primary" type="button">Adicionar à fila</button>
+        <small id="pptQueueStatus" class="muted"></small>
+      </div>
+      <small class="muted">A fila, o <b>Exportar PPTX</b> e o <b>Limpar fila</b> ficam na barra lateral, à esquerda.</small>
+
+      <div id="pptQueueList" class="muted" hidden></div>
+    </div>
+
+
+    <h2>5) Numeração</h2>
+    <div id="manualPanel" class="muted">Carregue KMLs para listar as malhas…</div>
+    <div class="inline" style="margin-top:12px">
+      <button id="btnClearPaint" class="btn-outline">Limpar pintura</button>
+      <small class="muted">Limpa todas as regiões (manual + automática)</small>
+    </div>
+
+
+    <h2>6) Exportação</h2>
+    <div class="inline">
+      <button id="btnExport" class="btn-primary">Exportar PNG</button>
+      <small id="expStatus"></small>
+    </div>
+  </aside>
+
+  <main id="map"></main>
+</div>
+
+<!-- Ponte Streamlit no lugar do QWebChannel do Qt (ver componentes/ponte_qt.js) -->
+<script src="ponte_qt.js"></script>
+<script>
+  window.QtBridge = null;
+  new QWebChannel(qt.webChannelTransport, function(channel){
+    window.QtBridge = channel.objects.QtBridge;
+  });
+
+  function Dropdown(rootEl){
+    const placeholder = rootEl.dataset.placeholder || '—';
+    let items = [];
+    let value = '';
+    let enabled = false;
+
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'dd-btn';
+    btn.disabled = true;
+    btn.innerHTML = `<span class="dd-text">${placeholder}</span><span class="dd-arrow">▼</span>`;
+
+    const menu = document.createElement('div');
+    menu.className = 'dd-menu';
+    menu.hidden = true;
+
+    rootEl.appendChild(btn);
+    rootEl.appendChild(menu);
+
+    function close(){ menu.hidden = true; }
+    function open(){ if(enabled && items.length) menu.hidden = false; }
+    function setText(t){ btn.querySelector('.dd-text').textContent = t || placeholder; }
+
+    function render(){
+      menu.innerHTML = '';
+      items.forEach(it=>{
+        const div = document.createElement('div');
+        div.className = 'dd-item' + (it===value ? ' is-selected' : '');
+        div.textContent = it;
+        div.addEventListener('click', ()=>{
+          value = it;
+          setText(it);
+          render();
+          close();
+          api.onChange && api.onChange(it);
+        });
+        menu.appendChild(div);
+      });
+    }
+
+    btn.addEventListener('click', ()=>{ if(menu.hidden) open(); else close(); });
+    document.addEventListener('click', (e)=>{ if(!rootEl.contains(e.target)) close(); });
+
+    const api = {
+      setEnabled(v){
+        enabled = !!v;
+        btn.disabled = !enabled;
+        if(!enabled){ value=''; setText(''); close(); }
+      },
+      setItems(arr){
+        items = Array.isArray(arr) ? arr.slice() : [];
+        value = '';
+        setText('');
+        render();
+        close();
+      },
+      getValue(){ return value; },
+      setValue(v){ value = items.includes(v) ? v : ''; setText(value); render(); close(); },
+      clear(){ items=[]; value=''; setText(''); render(); close(); },
+      onChange: null
+    };
+    return api;
+  }
+
+  function el(id){ return document.getElementById(id); }
+
+  window.__ddCase = Dropdown(document.getElementById('caseDD'));
+  window.__ddSeg  = Dropdown(document.getElementById('segmentDD'));
+  window.__segmentsByCase = {};
+  window.__baseByCase = {};
+  window.__regionsByCase = {};
+  window.__baseRegionsByCase = {};
+  window.__pptSigs = {};          // "caso|segmento" -> posição na fila
+  window.__salvarEstado = function(){};   // definido no script do mapa
+  window.__checkKml = function(){};       // definido no script do mapa
+  // restaurar pode chegar antes do script do mapa terminar de carregar
+  window.__restoreMapState = function(kmls, estado){ window.__restorePendente = [kmls, estado]; };
+
+  const BASE_MINIMA = 30;
+  function esc2(s){ return String(s==null?'':s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+  function fmtN(v){ return Number(v).toLocaleString('pt-BR', {maximumFractionDigits:1}); }
+  function check(id, tipo, html){ const b=el(id); b.className='check '+(tipo||''); b.innerHTML = html||''; }
+
+  // base reduzida: regiões do caso com base < 30
+  window.__checkBase = function(){
+    const caseKey = window.__ddCase.getValue();
+    if(!caseKey){ check('baseAlert','',''); return; }
+    const bases = window.__baseRegionsByCase[caseKey] || {};
+    const baixas = Object.keys(bases).filter(n => bases[n] < BASE_MINIMA);
+    const manual = parseFloat(String(el('baseOverride').value||'').replace(',','.'));
+    const linhas = [];
+    if(Number.isFinite(manual) && manual > 0 && manual < BASE_MINIMA){
+      linhas.push(`Base (Total) usada é <b>${fmtN(manual)}</b> — abaixo de ${BASE_MINIMA}.`);
+    }
+    if(baixas.length){
+      linhas.push(`<b>${baixas.length} região(ões) com base menor que ${BASE_MINIMA}</b> (valores instáveis):<ul>` +
+        baixas.map(n => `<li>${esc2(n)} — base ${fmtN(bases[n])}</li>`).join('') + '</ul>');
+    }
+    check('baseAlert', linhas.length ? 'aviso' : '', linhas.length ? '⚠️ ' + linhas.join('<br>') : '');
+  };
+  // último stats "cru" (para PPTX)
+  window.__lastStatsRaw = null; // {caseKey, segment, min, mean, max}
+
+  // Paletas por grupo (editáveis)
+  window.__palettes = {
+    good: { low:'#87cefa', mid:'#1e90ff', high:'#121958' },
+    bad:  { low:'#ffdf9e', mid:'#ffa500', high:'#843c0c' },
+    defaults: {
+      good: { low:'#87cefa', mid:'#1e90ff', high:'#121958' },
+      bad:  { low:'#ffdf9e', mid:'#ffa500', high:'#843c0c' },
+    }
+  };
+
+  function normSeg(s){
+    return String(s||'')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+      .toLowerCase().trim();
+  }
+  function isGoodSegment(seg){
+    const t = normSeg(seg);
+    return t.includes('certamente voto') || t.includes('aprovacao') || t.includes('aprovação');
+  }
+  function activeGroup(){
+    const seg = window.__ddSeg.getValue();
+    if(!seg) return null;
+    return isGoodSegment(seg) ? 'good' : 'bad';
+  }
+  function syncPaletteUI(){
+    const g = activeGroup();
+    if(!g){
+      el('paletteGroupHint').textContent = 'Grupo: —';
+      return;
+    }
+    el('paletteGroupHint').textContent = 'Grupo: ' + (g==='good' ? 'Bom' : 'Ruim');
+    el('palLow').value  = window.__palettes[g].low;
+    el('palMid').value  = window.__palettes[g].mid;
+    el('palHigh').value = window.__palettes[g].high;
+  }
+    el('pptQueueList').addEventListener('click', (ev)=>{
+        const btn = ev.target.closest('button[data-action="removeSlide"]');
+        if(!btn) return;
+        const idx = parseInt(btn.dataset.index, 10);
+        if(Number.isFinite(idx) && window.QtBridge?.removePptItem){
+            window.QtBridge.removePptItem(idx);
+        }
+    });
+
+  function updatePaletteFromUI(){
+    const g = activeGroup();
+    if(!g) return;
+    window.__palettes[g].low  = el('palLow').value;
+    window.__palettes[g].mid  = el('palMid').value;
+    window.__palettes[g].high = el('palHigh').value;
+  }
+
+  el('palLow').addEventListener('input', updatePaletteFromUI);
+  el('palMid').addEventListener('input', updatePaletteFromUI);
+  el('palHigh').addEventListener('input', updatePaletteFromUI);
+  ['palLow','palMid','palHigh'].forEach(id => el(id).addEventListener('change', ()=> window.__salvarEstado()));
+
+  el('btnResetPalette').addEventListener('click', ()=>{
+    const g = activeGroup();
+    if(!g) return;
+    window.__palettes[g] = JSON.parse(JSON.stringify(window.__palettes.defaults[g]));
+    syncPaletteUI();
+    window.__salvarEstado();
+  });
+
+  window.__setCases = function(payloadJson){
+    try{
+      const data = JSON.parse(payloadJson);
+      const status  = document.getElementById('excelStatus');
+      const statsRow = document.getElementById('statsRow');
+
+      window.__segmentsByCase = data.segmentsByCase || {};
+      window.__baseByCase = data.baseByCase || {};
+      window.__regionsByCase = data.regionsByCase || {};
+      window.__baseRegionsByCase = data.baseRegionsByCase || {};
+
+      window.__ddCase.setItems(data.cases || []);
+      window.__ddCase.setEnabled((data.cases||[]).length>0);
+
+      window.__ddSeg.clear();
+      window.__ddSeg.setEnabled(false);
+
+      let msg = (data.cases||[]).length ? `${data.cases.length} caso(s) encontrado(s)` : 'Nenhum caso encontrado';
+      if(data.debugPath){ msg += ` | Debug: ${data.debugPath}`; }
+      status.textContent = msg;
+
+      statsRow.style.display = 'none';
+      el('autoPaintStatus').textContent = '—';
+      check('paintCheck','',''); check('baseAlert','','');
+      window.__checkKml();
+    }catch(e){ console.error(e); }
+  };
+
+  // Agora recebe também rawMin/rawMean/rawMax (números) no final
+  window.__setStats = function(minV, meanV, maxV, tipMin, tipMean, tipMax, rawMin, rawMean, rawMax){
+    const statsRow = document.getElementById('statsRow');
+    statsRow.style.display = 'flex';
+
+    const elMin  = document.getElementById('statMin');
+    const elMean = document.getElementById('statMean');
+    const elMax  = document.getElementById('statMax');
+
+    elMin.textContent  = `Mín: ${minV}`;
+    elMean.textContent = `Média ${meanV}`;
+    elMax.textContent  = `Máx: ${maxV}`;
+
+    elMin.title  = tipMin || '';
+    elMean.title = tipMean || '';
+    elMax.title  = tipMax || '';
+
+    const caseKey = window.__ddCase.getValue();
+    const seg = window.__ddSeg.getValue();
+    if(typeof rawMin === 'number' && typeof rawMean === 'number' && typeof rawMax === 'number'){
+      window.__lastStatsRaw = { caseKey, segment: seg, min: rawMin, mean: rawMean, max: rawMax };
+    } else {
+      window.__lastStatsRaw = null;
+    }
+  };
+
+    window.__setPptQueueState = function(payloadJson){
+        try{
+            const data = JSON.parse(payloadJson);
+            el('pptQueueStatus').textContent = `Fila: ${data.count} mapa(s)`;
+            el('logoStatus').textContent = data.logoLoaded ? 'Logo carregada' : 'Sem logo';
+            window.__pptSigs = {};
+            (data.items || []).forEach((it, i)=>{ if(it && it.sig) window.__pptSigs[it.sig] = i; });
+
+            const box = el('pptQueueList');
+            box.innerHTML = '';
+
+            (data.items || []).forEach((it, idx)=>{
+                const index = (typeof it === 'string') ? idx : it.index;
+                const label = (typeof it === 'string') ? it : it.label;
+
+                const row = document.createElement('div');
+                row.className = 'inline';
+                row.style.justifyContent = 'space-between';
+                row.style.gap = '10px';
+                row.style.padding = '6px 0';
+                row.style.borderBottom = '1px dashed #eee';
+
+                const text = document.createElement('div');
+                text.textContent = `${index+1}. ${label}`;
+                text.style.flex = '1';
+                text.style.whiteSpace = 'nowrap';
+                text.style.overflow = 'hidden';
+                text.style.textOverflow = 'ellipsis';
+
+                const btn = document.createElement('button');
+                btn.className = 'btn-outline btn-sm';
+                btn.type = 'button';
+                btn.textContent = 'Remover';
+                btn.dataset.action = 'removeSlide';
+                btn.dataset.index = String(index);
+
+                row.appendChild(text);
+                row.appendChild(btn);
+                box.appendChild(row);
+            });
+
+        }catch(e){ console.error(e); }
+    };
+
+
+  // Excel UI
+  el('btnPickExcel').addEventListener('click', ()=>{
+    if(window.QtBridge?.pickExcel) window.QtBridge.pickExcel();
+  });
+
+  window.__ddCase.onChange = (caseKey)=>{
+    const segs = (window.__segmentsByCase && window.__segmentsByCase[caseKey]) ? window.__segmentsByCase[caseKey] : [];
+    window.__ddSeg.setItems(segs);
+    window.__ddSeg.setEnabled(!!caseKey && segs.length>0);
+    el('statsRow').style.display = 'none';
+
+    const excelBase = (window.__baseByCase && window.__baseByCase[caseKey]) ? window.__baseByCase[caseKey] : '';
+    const baseInput = el('baseOverride');
+    const hint = el('excelBaseHint');
+
+    hint.textContent = excelBase ? `Base do Excel (detectada): ${excelBase}` : 'Base do Excel: não detectada para este caso.';
+    if(excelBase) baseInput.value = excelBase;
+
+    syncPaletteUI();
+    window.__checkBase();
+    window.__checkKml();
+    window.__salvarEstado();
+  };
+
+  window.__ddSeg.onChange = (segment)=>{
+    syncPaletteUI();
+    window.__salvarEstado();
+    const caseKey = window.__ddCase.getValue();
+    const baseOverride = (el('baseOverride').value || '').trim();
+    if(caseKey && segment && window.QtBridge?.computeStats){
+      window.QtBridge.computeStats(caseKey, segment, baseOverride);
+    }
+  };
+
+  el('baseOverride').addEventListener('input', ()=>{
+    window.__checkBase();
+    window.__salvarEstado();
+    const caseKey = window.__ddCase.getValue();
+    const segment = window.__ddSeg.getValue();
+    const baseOverride = (el('baseOverride').value || '').trim();
+    if(caseKey && segment && window.QtBridge?.computeStats){
+      window.QtBridge.computeStats(caseKey, segment, baseOverride);
+    }
+  });
+
+  el('btnUseExcelBase').addEventListener('click', ()=>{
+    const caseKey = window.__ddCase.getValue();
+    const excelBase = (window.__baseByCase && window.__baseByCase[caseKey]) ? window.__baseByCase[caseKey] : '';
+    if (excelBase) el('baseOverride').value = excelBase;
+    window.__checkBase();
+
+    const segment = window.__ddSeg.getValue();
+    const baseOverride = (el('baseOverride').value || '').trim();
+    if(caseKey && segment && window.QtBridge?.computeStats){
+      window.QtBridge.computeStats(caseKey, segment, baseOverride);
+    }
+  });
+
+  el('btnApplyMap').addEventListener('click', ()=>{
+    const caseKey = window.__ddCase.getValue();
+    const segment = window.__ddSeg.getValue();
+    const baseOverride = (el('baseOverride').value || '').trim();
+    const noOverwriteManual = !!el('chkNoOverwriteManual').checked;
+
+    if(!caseKey || !segment){
+      el('autoPaintStatus').textContent = 'Selecione um Caso e um Segmento antes de aplicar.';
+      return;
+    }
+    if(window.QtBridge?.applyAutoPaint){
+      window.QtBridge.applyAutoPaint(caseKey, segment, baseOverride, noOverwriteManual);
+    }
+  });
+
+  // PPTX UI
+  el('btnPickLogo').addEventListener('click', ()=>{
+    if(window.QtBridge?.pickLogo) window.QtBridge.pickLogo();
+  });
+
+  // "Limpar fila" e "Exportar PPTX" agora ficam na barra lateral do Streamlit
+  el('btnClearQueue')?.addEventListener('click', ()=>{
+    if(window.QtBridge?.clearPptQueue) window.QtBridge.clearPptQueue();
+  });
+
+  el('btnExportPptx')?.addEventListener('click', ()=>{
+    if(window.QtBridge?.exportPptx) window.QtBridge.exportPptx();
+  });
+
+  el('btnAddToQueue').addEventListener('click', async ()=>{
+    if(window.__enqueuePptSlide) await window.__enqueuePptSlide();
+  });
+</script>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet-image/leaflet-image.js"></script>
+
+<script type="module">
+import { kml as kmlToGeoJSON } from "https://unpkg.com/@tmcw/togeojson?module";
+
+function el(id){ return document.getElementById(id); }
+
+/* ===== MAPA ===== */
+const map = L.map('map', { zoomControl:true, preferCanvas:true }).setView([-15.78,-47.88], 11);
+const canvasRenderer = L.canvas({ padding:0.5 });
+
+const baseOSM  = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { maxZoom:19, attribution:'© OpenStreetMap contributors', crossOrigin:'anonymous' });
+const baseEsri = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom:19, attribution:'Tiles © Esri', crossOrigin:'anonymous' });
+
+let currentBase = baseEsri.addTo(map);   // padrão do processo: Satélite (Esri)
+let labelsVisible = true;
+
+const kmlGroup = L.layerGroup().addTo(map);
+const boundsGroup = L.featureGroup().addTo(map);
+
+const layersByKey = new Map();
+const displayName = new Map();
+const colorByKey  = new Map();
+const paintSourceByKey = new Map(); // "manual" | "auto"
+const numberByKey = new Map();
+const labelByKey  = new Map();
+const labelPositionByKey = new Map();
+const usedKeys    = new Set();
+
+/* ===== NOVO: dados estruturados p/ legenda do PPT ===== */
+const legendNameByKey  = new Map(); // key -> nome (ex.: "AP 5")
+const legendValueByKey = new Map(); // key -> valor (%)
+const legendClsByKey   = new Map(); // key -> low|mid|high (opcional)
+const popupByKey       = new Map(); // key -> html do balão (para restaurar)
+
+let fillOpacityPct = 83;
+let numFontSize = 28;
+let borderWeight = 2;
+const numFontFamily = `"Aptos (Corpo)", "Aptos", Calibri, DIN, Arial, sans-serif`;
+
+/* ===== util normalização/match ===== */
+function stripNumericPrefix(name){
+  return String(name||'').replace(/^\s*\d+\s*[-–—.:]\s*/,'').trim();
+}
+function matchKey(name){
+  let s = String(name || '');
+  s = s.replace(/\r\n/g, '\n');
+  s = s.replace(/-\s*\n?\s*/g, ''); // cola "Flumi- nense" -> "Fluminense"
+  s = s.replace(/\u00AD/g, '');     // soft-hyphen invisível
+  s = s
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g,' ')
+    .trim();
+  return s;
+}
+function isGoodSegment(seg){
+  const t = String(seg||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+  return t.includes('certamente voto') || t.includes('aprovacao') || t.includes('aprovação');
+}
+
+/* ===== CONTROLES ===== */
+const opacityRange  = el('opacityRange'), opacityNumber = el('opacityNumber');
+const fontRange     = el('fontRange'), fontNumber = el('fontNumber');
+const borderRange   = el('borderRange'), borderNumber = el('borderNumber');
+
+opacityRange.addEventListener('input', e=> setOpacityPct(Number(e.target.value)));
+opacityNumber.addEventListener('input', e=> setOpacityPct(Number(e.target.value)));
+fontRange.addEventListener('input', e=> setFontSize(Number(e.target.value)));
+fontNumber.addEventListener('input', e=> setFontSize(Number(e.target.value)));
+borderRange.addEventListener('input', e=> setBorderWeight(Number(e.target.value)));
+borderNumber.addEventListener('input', e=> setBorderWeight(Number(e.target.value)));
+
+function setOpacityPct(v){ fillOpacityPct = Math.max(0, Math.min(100, v)); opacityRange.value = opacityNumber.value = fillOpacityPct; repaintAll(); salvarEstado(); }
+function setFontSize(px){ numFontSize = Math.max(10, Math.min(80, px)); fontRange.value = fontNumber.value = numFontSize; numberByKey.forEach((_,k)=> updateLabel(k)); salvarEstado(); }
+function setBorderWeight(w){ borderWeight = Math.max(0, Math.min(10, w)); borderRange.value = borderNumber.value = borderWeight; repaintAll(); salvarEstado(); }
+
+const kmlInput=el('kmlInput'), manualPanel=el('manualPanel');
+const btnClear=el('btnClearPaint'), btnExport=el('btnExport');
+const baseSelect=el('baseSelect'), expStatus=el('expStatus'), btnToggleLabels=el('btnToggleLabels');
+
+kmlInput.addEventListener('change', async (e)=>{
+  const lidos = [];
+  for(const file of e.target.files){
+    if(!file.name.toLowerCase().endsWith('.kml')) continue;
+    lidos.push({ name: file.name, text: await file.text() });
+  }
+  carregarKmls(lidos);
+  // guarda os KMLs no Python: trocar de ferramenta e voltar não perde o mapa
+  if(window.QtBridge?.saveKmls) window.QtBridge.saveKmls(JSON.stringify(lidos));
+  salvarEstado();
+});
+
+function carregarKmls(lista){
+  resetAll();
+  for(const file of lista){
+    const text=file.text;
+    const dom=new DOMParser().parseFromString(text,'text/xml');
+    const gj=kmlToGeoJSON(dom);
+
+    const baseName=file.name.replace(/\.[A-Za-z0-9]+$/,'');
+    const key=uniqueKey(canon(baseName));
+    displayName.set(key, baseName);
+
+    const layer = L.geoJSON(gj, {
+      renderer: canvasRenderer,
+      style: defaultStyle,
+      onEachFeature: (f,ly)=>{
+        f.properties=f.properties||{};
+        f.properties.__fileKey=key;
+        ly.bindPopup(`<b>${escapeHtml(baseName)}</b>`);
+        registerLayer(key, ly);
+      }
+    });
+    layer.addTo(kmlGroup); boundsGroup.addLayer(layer);
+  }
+  if(boundsGroup.getLayers().length){ try{ map.fitBounds(boundsGroup.getBounds(),{padding:[20,20]}); }catch{} }
+  rebuildManualUI();
+  checkKml();
+}
+
+baseSelect.addEventListener('change', ()=>{
+  if(currentBase) map.removeLayer(currentBase);
+  const val = baseSelect.value;
+  if(val==='esri') currentBase = baseEsri.addTo(map);
+  else if(val==='osm') currentBase = baseOSM.addTo(map);
+  else currentBase = null;
+  salvarEstado();
+});
+
+btnToggleLabels.addEventListener('click', ()=>{
+  labelsVisible = !labelsVisible;
+  btnToggleLabels.textContent = labelsVisible ? 'Ocultar números' : 'Mostrar números';
+  labelByKey.forEach(m=> labelsVisible ? m.addTo(map) : map.removeLayer(m));
+  salvarEstado();
+});
+
+/* ===== Pintura manual/limpeza individual ===== */
+manualPanel.addEventListener('click', (ev)=>{
+  const btn = ev.target.closest('[data-action="clear"]');
+  if(btn){
+    const key = btn.dataset.key;
+    clearRegionPaint(key);
+    rebuildManualUI();
+    return;
+  }
+});
+
+manualPanel.addEventListener('input', (ev)=>{
+  const input = ev.target.closest('.num');
+  const colorPicker = ev.target.closest('.custom-color-input');
+  if(input){
+    const key=input.dataset.key, val=(input.value||'').trim();
+    if(!val){ numberByKey.delete(key); removeLabel(key); }
+    else { numberByKey.set(key,val); updateLabel(key); }
+    salvarEstado();
+  }
+  if(colorPicker){
+    applyColor(colorPicker.dataset.key, colorPicker.value, 'manual');
+    rebuildManualUI();
+  }
+});
+
+function applyColor(key, hex, source='manual'){
+  colorByKey.set(key, hex);
+  paintSourceByKey.set(key, source);
+  (layersByKey.get(key)||[]).forEach(ly=> setStyle(ly, {fillColor:hex}));
+  salvarEstado();
+}
+
+function clearRegionPaint(key){
+  colorByKey.delete(key);
+  paintSourceByKey.delete(key);
+
+  // ✅ limpa dados da legenda do PPT para esta região
+  legendNameByKey.delete(key);
+  legendValueByKey.delete(key);
+  legendClsByKey.delete(key);
+
+  popupByKey.delete(key);
+  (layersByKey.get(key)||[]).forEach(ly=>{
+    try{ ly.unbindPopup(); }catch{}
+    setStyle(ly, {fillColor:'#ffffff'});
+  });
+  salvarEstado();
+}
+
+btnClear.addEventListener('click', ()=>{
+  colorByKey.clear();
+  paintSourceByKey.clear();
+
+  // ✅ limpa dados da legenda do PPT
+  legendNameByKey.clear();
+  legendValueByKey.clear();
+  legendClsByKey.clear();
+
+  layersByKey.forEach((list)=>{
+    list.forEach(ly=>{
+      try{ ly.unbindPopup(); }catch{}
+    });
+  });
+
+  popupByKey.clear();
+  repaintAll();
+  rebuildManualUI();
+  el('autoPaintStatus').textContent = 'Pintura limpa.';
+  el('paintCheck').className = 'check'; el('paintCheck').innerHTML = '';
+  salvarEstado();
+});
+
+/* ===== UI KML list ===== */
+function rebuildManualUI(){
+  if(layersByKey.size===0){
+    manualPanel.innerHTML = '<span class="muted">Carregue KMLs para listar as malhas…</span>';
+    return;
+  }
+  const rows=[];
+  for(const key of Array.from(layersByKey.keys()).sort()){
+    const name = escapeHtml(displayName.get(key)||key);
+    const currentColor = colorByKey.get(key);
+    const val = escapeHtml(numberByKey.get(key)||'');
+    const customHex = currentColor || '#ffffff';
+    const src = paintSourceByKey.get(key);
+
+    const badge = src ? `<span class="badge ${src==='manual'?'manual':'auto'}">${src==='manual'?'MANUAL':'AUTO'}</span>` : '';
+
+    rows.push(`
+      <div class="manual-row">
+        <div class="manual-header">
+           <div class="manual-name" title="${name}">${name} ${badge}</div>
+           <div class="inline" style="gap:6px">
+             <button class="btn-outline btn-sm" type="button" data-action="clear" data-key="${escapeHtml(key)}">Limpar</button>
+             <input class="num" type="text" placeholder="#" value="${val}" data-key="${escapeHtml(key)}" />
+           </div>
+        </div>
+        <div class="inline">
+          <input type="color" class="custom-color-input" title="Cor (manual)" data-key="${escapeHtml(key)}" value="${customHex}">
+          <small class="muted">Cor (manual)</small>
+        </div>
+      </div>
+    `);
+  }
+  manualPanel.innerHTML = rows.join('');
+}
+
+/* ===== Labels ===== */
+function updateLabel(key){
+  const text=numberByKey.get(key); if(!text) return removeLabel(key);
+  let pos = labelPositionByKey.get(key) || getCenterForKey(key);
+  if(!pos) return;
+  const { url,w,h } = makeSvgLabelIcon(text);
+  const icon=L.icon({ iconUrl:url, iconSize:[w,h], iconAnchor:[w/2,h/2] });
+  let marker=labelByKey.get(key);
+  if(marker){ marker.setLatLng(pos); marker.setIcon(icon); }
+  else {
+    marker = L.marker(pos, { icon, draggable:true, zIndexOffset:1000 });
+    marker.on('dragend', (e)=>{ labelPositionByKey.set(key, e.target.getLatLng()); salvarEstado(); });
+    if(labelsVisible) marker.addTo(map);
+    labelByKey.set(key, marker);
+  }
+}
+
+function removeLabel(key){ const m=labelByKey.get(key); if(m) map.removeLayer(m); labelByKey.delete(key); }
+
+function getCenterForKey(key){
+  const list=layersByKey.get(key)||[]; if(!list.length) return null;
+  let bounds=null;
+  for(const ly of list){
+    let b=null; if(ly.getBounds) b=ly.getBounds();
+    if(!b) continue; bounds = bounds ? bounds.extend(b) : b;
+  }
+  return bounds ? bounds.getCenter() : null;
+}
+
+function makeSvgLabelIcon(text){
+  const t=String(text); const fs=numFontSize, pad=6;
+  const w=Math.max(32, Math.round(0.65*fs)*t.length + pad*2); const h=fs + pad*2;
+  const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">
+    <style>text{font:700 ${fs}px ${numFontFamily}; fill:#fff; stroke:#000; stroke-width:4px; paint-order:stroke;}</style>
+    <text x="${w/2}" y="${h-pad}" text-anchor="middle">${escapeHtml(t)}</text>
+  </svg>`;
+  return { url:'data:image/svg+xml;utf8,'+encodeURIComponent(svg), w, h };
+}
+
+/* ===== Estilo ===== */
+function defaultStyle(){ return { color:'#000', weight:borderWeight, opacity:1, lineJoin:'round', fillOpacity:.15, fillColor:'#ffffff' }; }
+function setStyle(ly, s){
+  const key = ly.feature?.properties?.__fileKey;
+  const fill = s.fillColor || colorByKey.get(key) || '#ffffff';
+  const final = { fillColor: fill, color: '#000', weight: borderWeight, opacity: 1, fillOpacity: fillOpacityPct/100 };
+  if(ly.setStyle) ly.setStyle(final);
+}
+function repaintAll(){
+  layersByKey.forEach((list)=>{
+    list.forEach(ly => setStyle(ly, {}));
+  });
+}
+
+/* ===== Auto paint ===== */
+function buildKmlNameIndex(){
+  const idx = new Map(); // normalizedName -> key
+  for(const key of layersByKey.keys()){
+    const base = displayName.get(key) || key;
+    const a1 = matchKey(base);
+    const a2 = matchKey(stripNumericPrefix(base));
+    if(a1 && !idx.has(a1)) idx.set(a1, key);
+    if(a2 && !idx.has(a2)) idx.set(a2, key);
+  }
+  return idx;
+}
+
+window.__applyAutoPaint = function(payloadJson){
+  let payload;
+  try{ payload = JSON.parse(payloadJson); }catch(e){ console.error(e); return; }
+
+  if(layersByKey.size===0){
+    el('autoPaintStatus').textContent = 'Carregue os KMLs antes de aplicar a pintura.';
+    return;
+  }
+
+  const idx = buildKmlNameIndex();
+
+  const seg = payload.segment;
+  const minV = payload.min;
+  const maxV = payload.max;
+  const noOverwriteManual = !!payload.noOverwriteManual;
+
+  const group = isGoodSegment(seg) ? 'good' : 'bad';
+  const pal = window.__palettes[group];
+
+  const missing = [];
+  const skippedManual = [];
+  let painted = 0;
+
+  for(const item of payload.items){
+    const excelName = item.name;
+    const v = item.value;
+    const cls = item.cls; // low|mid|high
+
+    const n1 = matchKey(excelName);
+    const n2 = matchKey(stripNumericPrefix(excelName));
+    const key = idx.get(n1) || idx.get(n2);
+
+    if(!key){
+      missing.push(excelName);
+      continue;
+    }
+
+    // ✅ Guarda dados para a tabela do PPT (não depende do tooltip)
+    legendNameByKey.set(key, excelName);
+    legendValueByKey.set(key, v);
+    legendClsByKey.set(key, cls);
+
+    const currentSource = paintSourceByKey.get(key);
+    const shouldPaint = !(noOverwriteManual && currentSource === 'manual');
+
+    const color = (cls==='low') ? pal.low : (cls==='high') ? pal.high : pal.mid;
+
+    if(!shouldPaint){
+      skippedManual.push(excelName);
+    } else {
+      applyColor(key, color, 'auto');
+      painted++;
+    }
+
+    // Popup
+    const labelCls = (cls==='low') ? 'Baixo' : (cls==='mid') ? 'Médio' : 'Alto';
+    const html = `
+      <div style="font-family:system-ui,Arial,sans-serif;min-width:240px">
+        <div style="font-weight:900;margin-bottom:4px">${escapeHtml(excelName)}</div>
+        <div><b>Segmento:</b> ${escapeHtml(seg)}</div>
+        <div><b>Valor:</b> ${String(v).replace('.',',')}</div>
+        <div><b>Categoria:</b> ${labelCls}</div>
+        <div style="margin-top:6px;color:#666;font-size:12px">
+          <b>Regras:</b> &lt;Min = Baixo | Min..Max = Médio | &gt;Max = Alto<br>
+          <b>Min:</b> ${String(minV).replace('.',',')} | <b>Max:</b> ${String(maxV).replace('.',',')}
+        </div>
+      </div>
+    `;
+    popupByKey.set(key, html);
+    (layersByKey.get(key)||[]).forEach(ly=>{
+      ly.bindPopup(html);
+    });
+  }
+
+  const st = [];
+  st.push(`Pintadas: ${painted}`);
+  if(skippedManual.length) st.push(`Ignoradas (manual): ${skippedManual.length}`);
+  if(missing.length){
+    const preview = missing.slice(0, 8).join(', ');
+    st.push(`Não encontradas no KML: ${missing.length}${preview?` (ex.: ${preview})`:''}`);
+  }
+  el('autoPaintStatus').textContent = st.join(' | ');
+
+  // conferência bem visível: verde = tudo pintado, vermelho = faltou algo
+  const usados = new Set();
+  for(const item of payload.items){
+    const k = idx.get(matchKey(item.name)) || idx.get(matchKey(stripNumericPrefix(item.name)));
+    if(k) usados.add(k);
+  }
+  const kmlSemDado = Array.from(layersByKey.keys()).filter(k => !usados.has(k)).map(k => displayName.get(k) || k);
+  const total = payload.items.length;
+  const pc = el('paintCheck');
+  if(!missing.length && !kmlSemDado.length){
+    pc.className = 'check ok';
+    pc.innerHTML = `✅ <b>Todas as ${total} regiões do Excel foram pintadas</b>` +
+      (skippedManual.length ? ` (${skippedManual.length} mantida(s) com a cor manual).` : '.');
+  } else {
+    pc.className = 'check erro';
+    let h = `❌ <b>Pintadas ${painted + skippedManual.length} de ${total} regiões do Excel.</b>`;
+    if(missing.length) h += `<br>Regiões do Excel <b>sem KML</b> (confira o nome do arquivo):<ul>` +
+      missing.map(n => `<li>${escapeHtml(n)}</li>`).join('') + '</ul>';
+    if(kmlSemDado.length) h += `KMLs <b>sem dado neste caso</b>:<ul>` +
+      kmlSemDado.map(n => `<li>${escapeHtml(n)}</li>`).join('') + '</ul>';
+    pc.innerHTML = h;
+  }
+
+  window.__ultimaPintura = { segment: seg, min: minV, max: maxV };
+  rebuildManualUI();
+  salvarEstado();
+};
+
+/* ===== Captura PNG (para Export e PPTX) ===== */
+async function makeMapPngDataUrl(){
+  const toRestore = [];
+  if(labelsVisible){
+    labelByKey.forEach(m=>{ if(map.hasLayer(m)){ toRestore.push(m); map.removeLayer(m);} });
+  }
+  await waitTilesLoaded(4000);
+
+  return await new Promise((resolve, reject)=>{
+    window.leafletImage(map, (err, canvas)=>{
+      if(err){ toRestore.forEach(m=>m.addTo(map)); return reject(err); }
+      const out = document.createElement('canvas'); out.width = canvas.width; out.height = canvas.height;
+      const ctx = out.getContext('2d'); ctx.drawImage(canvas, 0, 0);
+
+      // desenha números manuais por cima
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+      numberByKey.forEach((txt, key)=>{
+        const pos = labelPositionByKey.get(key) || getCenterForKey(key); if(!pos) return;
+        const pt = map.latLngToContainerPoint(pos);
+        ctx.font = `700 ${numFontSize}px ${numFontFamily}`;
+        ctx.strokeStyle = '#000'; ctx.lineWidth = Math.max(2, numFontSize*0.15);
+        ctx.fillStyle = '#fff';
+        ctx.strokeText(String(txt), pt.x, pt.y);
+        ctx.fillText(String(txt), pt.x, pt.y);
+      });
+
+      const dataUrl = out.toDataURL('image/png');
+      toRestore.forEach(m=>m.addTo(map));
+      resolve(dataUrl);
+    });
+  });
+}
+
+/* ===== PPTX enqueue (um slide por captura) ===== */
+window.__enqueuePptSlide = async function(){
+  const caseKey = window.__ddCase?.getValue?.() || '';
+  const segment = window.__ddSeg?.getValue?.() || '';
+  if(!caseKey || !segment){
+    el('pptQueueStatus').textContent = 'Selecione Caso e Segmento antes de adicionar.';
+    return;
+  }
+
+  const stats = window.__lastStatsRaw;
+  if(!stats || stats.caseKey !== caseKey || stats.segment !== segment){
+    el('pptQueueStatus').textContent = 'Calcule as estatísticas (selecione o segmento) antes de adicionar.';
+    return;
+  }
+
+  const group = isGoodSegment(segment) ? 'good' : 'bad';
+  const pal = window.__palettes[group];
+
+  // ✅ monta legenda estruturada (nome, cor, valor)
+  const legend = [];
+  legendValueByKey.forEach((val, key) => {
+    if (typeof val !== 'number') return;
+    const name = (numberByKey.get(key) || '').toString().trim() || (legendNameByKey.get(key) || displayName.get(key) || key);
+    const color = colorByKey.get(key) || '#ffffff';
+    legend.push({ name, value: val, color });
+  });
+  legend.sort((a,b) => String(a.name).localeCompare(String(b.name), 'pt-BR', { numeric:true, sensitivity:'base' }));
+
+  // mesmo caso + segmento já na fila: pergunta se deve substituir
+  const sig = caseKey + '|' + segment;
+  let substituir = false;
+  if(Object.prototype.hasOwnProperty.call(window.__pptSigs || {}, sig)){
+    const pos = window.__pptSigs[sig] + 1;
+    if(!confirm(`Esse mapa (mesmo caso e segmento) já está na fila, no item ${pos}.\n\nSubstituir pela versão atual?`)){
+      el('pptQueueStatus').textContent = `Mantido o item ${pos} da fila.`;
+      return;
+    }
+    substituir = true;
+  }
+
+  const meta = {
+    substituir,
+    caseKey,
+    segment,
+    group,
+    palette: { low: pal.low, mid: pal.mid, high: pal.high },
+    stats: { min: stats.min, mean: stats.mean, max: stats.max },
+    legend
+  };
+
+  if(!window.QtBridge?.addToPptQueue){
+    el('pptQueueStatus').textContent = 'Bridge não disponível.';
+    return;
+  }
+
+  el('pptQueueStatus').textContent = 'Capturando mapa…';
+  try{
+    const dataUrl = await makeMapPngDataUrl();
+    window.QtBridge.addToPptQueue(JSON.stringify(meta), dataUrl);
+    el('pptQueueStatus').textContent = substituir ? 'Substituindo na fila…' : 'Adicionando à fila…';
+  }catch(e){
+    console.error(e);
+    el('pptQueueStatus').textContent = 'Erro ao capturar o mapa.';
+  }
+};
+
+/* ===== Export ===== */
+btnExport.addEventListener('click', async ()=>{
+  try{
+    btnExport.disabled = true; expStatus.textContent = 'A gerar PNG…';
+    const dataUrl = await makeMapPngDataUrl();
+    if(window.QtBridge?.savePng) window.QtBridge.savePng(dataUrl);
+  }finally{ btnExport.disabled = false; expStatus.textContent = ''; }
+});
+
+function registerLayer(k, ly){ if(!layersByKey.has(k)) layersByKey.set(k, []); layersByKey.get(k).push(ly); }
+function resetAll(){
+  kmlGroup.clearLayers(); boundsGroup.clearLayers();
+  layersByKey.clear(); displayName.clear(); colorByKey.clear(); paintSourceByKey.clear();
+  numberByKey.clear(); labelPositionByKey.clear();
+  labelByKey.forEach(m=>map.removeLayer(m)); labelByKey.clear();
+  usedKeys.clear();
+
+  // ✅ limpa dados da legenda do PPT
+  legendNameByKey.clear();
+  legendValueByKey.clear();
+  legendClsByKey.clear();
+  popupByKey.clear();
+
+  manualPanel.innerHTML='<span class="muted">Carregue KMLs para listar as malhas…</span>';
+}
+
+/* ===== Conferência KMLs × regiões do caso ===== */
+function checkKml(){
+  const box = el('kmlCheck');
+  const n = layersByKey.size;
+  if(!n){ box.className = 'check'; box.innerHTML = ''; return; }
+  const caseKey = window.__ddCase?.getValue?.() || '';
+  const regioes = (window.__regionsByCase || {})[caseKey] || [];
+  if(!caseKey || !regioes.length){
+    box.className = 'check ok';
+    box.innerHTML = `✅ <b>${n} KML(s) carregado(s).</b> Escolha o caso para conferir os nomes.`;
+    return;
+  }
+  const idx = buildKmlNameIndex();
+  const semKml = regioes.filter(r => !(idx.get(matchKey(r)) || idx.get(matchKey(stripNumericPrefix(r)))));
+  const usados = new Set(regioes.map(r => idx.get(matchKey(r)) || idx.get(matchKey(stripNumericPrefix(r)))).filter(Boolean));
+  const sobra = Array.from(layersByKey.keys()).filter(k => !usados.has(k)).map(k => displayName.get(k) || k);
+  const bate = regioes.length - semKml.length;
+  if(!semKml.length && !sobra.length){
+    box.className = 'check ok';
+    box.innerHTML = `✅ <b>${n} KML(s) carregado(s) — todos batem com as ${regioes.length} regiões do caso.</b>`;
+    return;
+  }
+  box.className = 'check ' + (semKml.length ? 'erro' : 'aviso');
+  let h = `${semKml.length ? '❌' : '⚠️'} <b>${n} KML(s) carregado(s) — ${bate} de ${regioes.length} regiões do caso têm KML.</b>`;
+  if(semKml.length) h += `<br>Regiões <b>sem KML</b>:<ul>${semKml.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>`;
+  if(sobra.length) h += `KMLs que <b>não estão no caso</b>:<ul>${sobra.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>`;
+  box.innerHTML = h;
+}
+window.__checkKml = checkKml;
+
+/* ===== Estado do mapa (guardado no Python para não perder ao trocar de ferramenta) ===== */
+let restaurando = false;
+let timerSalvar = null;
+function salvarEstado(){
+  if(restaurando) return;
+  clearTimeout(timerSalvar);
+  timerSalvar = setTimeout(()=>{
+    if(!window.QtBridge?.saveMapState) return;
+    const posicoes = {};
+    labelPositionByKey.forEach((ll, k)=>{ posicoes[k] = [ll.lat, ll.lng]; });
+    let c = null, z = null;
+    try{ c = map.getCenter(); z = map.getZoom(); }catch{}
+    const estado = {
+      view: c ? { lat: c.lat, lng: c.lng, zoom: z } : null,
+      base: baseSelect.value, labelsVisible, fillOpacityPct, borderWeight, numFontSize,
+      colors: Array.from(colorByKey.entries()),
+      sources: Array.from(paintSourceByKey.entries()),
+      numbers: Array.from(numberByKey.entries()),
+      positions: posicoes,
+      legendName: Array.from(legendNameByKey.entries()),
+      legendValue: Array.from(legendValueByKey.entries()),
+      legendCls: Array.from(legendClsByKey.entries()),
+      popups: Array.from(popupByKey.entries()),
+      palettes: { good: window.__palettes.good, bad: window.__palettes.bad },
+      noOverwrite: !!el('chkNoOverwriteManual').checked,
+      caseKey: window.__ddCase?.getValue?.() || '',
+      segment: window.__ddSeg?.getValue?.() || '',
+      baseOverride: el('baseOverride').value || '',
+      autoPaintStatus: el('autoPaintStatus').textContent,
+      paintCheck: { cls: el('paintCheck').className, html: el('paintCheck').innerHTML },
+    };
+    window.QtBridge.saveMapState(JSON.stringify(estado));
+  }, 1200);
+}
+window.__salvarEstado = salvarEstado;
+map.on('moveend', salvarEstado);
+el('chkNoOverwriteManual').addEventListener('change', salvarEstado);
+
+function restaurarEstado(kmlsJson, estadoJson){
+  let kmls = [], e = {};
+  try{ kmls = JSON.parse(kmlsJson || '[]'); }catch{}
+  try{ e = JSON.parse(estadoJson || '{}'); }catch{}
+  restaurando = true;
+  try{
+    if(kmls.length) carregarKmls(kmls);
+    if(e.base){ baseSelect.value = e.base; baseSelect.dispatchEvent(new Event('change')); }
+    if(typeof e.fillOpacityPct === 'number') setOpacityPct(e.fillOpacityPct);
+    if(typeof e.borderWeight === 'number') setBorderWeight(e.borderWeight);
+    if(typeof e.numFontSize === 'number') setFontSize(e.numFontSize);
+    if(e.palettes){ window.__palettes.good = e.palettes.good || window.__palettes.good;
+                    window.__palettes.bad = e.palettes.bad || window.__palettes.bad; }
+    if(typeof e.noOverwrite === 'boolean') el('chkNoOverwriteManual').checked = e.noOverwrite;
+    (e.colors || []).forEach(([k, hex])=>{ if(layersByKey.has(k)) applyColor(k, hex, 'manual'); });
+    (e.sources || []).forEach(([k, src])=>{ if(layersByKey.has(k)) paintSourceByKey.set(k, src); });
+    (e.legendName || []).forEach(([k, v])=> legendNameByKey.set(k, v));
+    (e.legendValue || []).forEach(([k, v])=> legendValueByKey.set(k, v));
+    (e.legendCls || []).forEach(([k, v])=> legendClsByKey.set(k, v));
+    (e.popups || []).forEach(([k, html])=>{
+      popupByKey.set(k, html);
+      (layersByKey.get(k) || []).forEach(ly => ly.bindPopup(html));
+    });
+    Object.entries(e.positions || {}).forEach(([k, p])=> labelPositionByKey.set(k, L.latLng(p[0], p[1])));
+    (e.numbers || []).forEach(([k, v])=>{ if(layersByKey.has(k)){ numberByKey.set(k, v); updateLabel(k); } });
+    if(e.labelsVisible === false && labelsVisible) btnToggleLabels.click();
+    rebuildManualUI();
+
+    // caso / segmento / base (sem recalcular nada no caminho)
+    const dc = window.__ddCase, ds = window.__ddSeg;
+    if(e.caseKey && (window.__segmentsByCase || {})[e.caseKey]){
+      dc.setValue(e.caseKey);
+      const segs = window.__segmentsByCase[e.caseKey] || [];
+      ds.setItems(segs); ds.setEnabled(segs.length > 0);
+      const excelBase = (window.__baseByCase || {})[e.caseKey] || '';
+      el('excelBaseHint').textContent = excelBase ? `Base do Excel (detectada): ${excelBase}` : 'Base do Excel: não detectada para este caso.';
+      el('baseOverride').value = e.baseOverride || excelBase || '';
+      if(e.segment && segs.includes(e.segment)){
+        ds.setValue(e.segment);
+        if(window.QtBridge?.computeStats) window.QtBridge.computeStats(e.caseKey, e.segment, (el('baseOverride').value || '').trim());
+      }
+      window.__checkBase();
+    }
+    syncPaletteUIFromMap();
+    if(e.autoPaintStatus) el('autoPaintStatus').textContent = e.autoPaintStatus;
+    if(e.paintCheck){ el('paintCheck').className = e.paintCheck.cls || 'check'; el('paintCheck').innerHTML = e.paintCheck.html || ''; }
+    if(e.view && typeof e.view.lat === 'number') map.setView([e.view.lat, e.view.lng], e.view.zoom);
+    checkKml();
+  } finally {
+    restaurando = false;
+  }
+}
+function syncPaletteUIFromMap(){
+  const seg = window.__ddSeg?.getValue?.() || '';
+  if(!seg){ el('paletteGroupHint').textContent = 'Grupo: —'; return; }
+  const g = isGoodSegment(seg) ? 'good' : 'bad';
+  el('paletteGroupHint').textContent = 'Grupo: ' + (g==='good' ? 'Bom' : 'Ruim');
+  el('palLow').value = window.__palettes[g].low;
+  el('palMid').value = window.__palettes[g].mid;
+  el('palHigh').value = window.__palettes[g].high;
+}
+window.__restoreMapState = restaurarEstado;
+if(window.__restorePendente){
+  const [k, e] = window.__restorePendente;
+  window.__restorePendente = null;
+  restaurarEstado(k, e);
+}
+function canon(s){ return s.normalize('NFD').replace(/\p{Diacritic}/gu,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+function uniqueKey(base){ let k=base, i=2; while(usedKeys.has(k)){ k=`${base} #${i++}` } usedKeys.add(k); return k; }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[m])); }
+
+function waitTilesLoaded(timeout=4000){
+  const layers = []; map.eachLayer(l=>{ if(l instanceof L.TileLayer && map.hasLayer(l)) layers.push(l); });
+  if(!layers.length) return Promise.resolve();
+  return new Promise(res=>{
+    let done=false;
+    const check=()=>{ if(done) return; if(layers.every(tl=>!tl._loading)) { done=true; res(); } };
+    layers.forEach(tl=>{ if(tl._loading){ tl.once('load', ()=> check()); } });
+    setTimeout(()=>{ if(!done) res(); }, timeout);
+    check();
+  });
+}
+</script>
+</body>
+</html>

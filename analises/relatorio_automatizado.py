@@ -12,14 +12,15 @@ ESTADO ATUAL: TODOS os 16 códigos estão portados e ligados de verdade —
 11, 12, 14, 16 (core/relatorio_automatizado_math.py), 13
 (core/cabecalho_correcao_math.py, precisa de arquivo de referência) e 15
 (core/capas_resultados_math.py), além da etapa de Legendas (reaproveita
-core/legendas_math.py).
+core/legendas_math.py) e do código 17 (bordas espessas no contorno do
+cabeçalho das tabelas segmentadas — código novo, sem VBA de origem).
 
 Não depende do `dados` carregado no início do app: tem upload próprio.
 
 MODO SEMIAUTOMÁTICO: checkbox "⚡ Modo semiautomático" faz as etapas que
 são só "clicar em Aplicar" (sem decisão a tomar nem arquivo a importar)
 avançarem sozinhas — limpeza_multiplas, codigo_04, codigo_06_07,
-codigo_08_12, codigo_14 e codigo_15. O assistente continua parando
+codigo_08_12, codigo_17, codigo_14 e codigo_15. O assistente continua parando
 normalmente em toda etapa que exige uma escolha real da pessoa: aviso
 (confirmação), upload, base_multiplas (upload/pular), origem (SPSS
 Relatoria/Inovação), novos_termos (termos extras opcionais), base_reduzida
@@ -67,6 +68,7 @@ from core.relatorio_automatizado_math import (
     aplicar_codigo_10,
     aplicar_codigo_11,
     aplicar_codigo_12,
+    aplicar_codigo_17,
     aplicar_codigo_14,
     aplicar_codigo_16,
     remover_termo_do_sumario,
@@ -170,6 +172,7 @@ _ETAPAS_COM_PROGRESSO = [
     ("codigo_06_07", "DIN 9 + quebras de página (06-07)"),
     ("legendas", "Legendas"),
     ("codigo_08_12", "Base pequena até Perguntas (08-12)"),
+    ("codigo_17", "Bordas do cabeçalho + Muda Bordas (17 + 02)"),
     ("codigo_14", "Cabeçalho/rodapé (14)"),
     ("codigo_15", "Capas de resultados (15)"),
     ("final", "Concluído"),
@@ -595,6 +598,30 @@ def modulo_relatorio_automatizado():
                     "fn": aplicar_codigo_12, "numero": "12", "nome": "Ajuste da altura das Perguntas",
                     "aproximado": True,
                 },
+            ])
+            _ir_para("codigo_17")
+        return
+
+    # ---------------------------------------------------------------
+    if etapa == "codigo_17":
+        st.subheader("Bordas do cabeçalho das tabelas + Muda Bordas (códigos 17 e 02)")
+        st.caption(
+            "Em cada tabela segmentada, localiza a célula mesclada \"Total\" "
+            "na coluna B e aplica borda espessa no contorno do cabeçalho "
+            "(linha de cima, linha de baixo e laterais, da coluna A até a "
+            "última coluna da tabela) e nas laterais da coluna Total. As "
+            "divisórias internas entre as subcategorias não mudam. Em "
+            "seguida roda o Muda Bordas (02), que converte as bordas "
+            "espessas da planilha em médias."
+        )
+        if modo_auto:
+            st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo17_continuar"):
+            _aplicar_sequencia([
+                {"fn": aplicar_codigo_17, "numero": "17", "nome": "Bordas espessas no cabeçalho"},
+                # pedido do Lucas: logo depois do 17, roda o Muda Bordas
+                # (02), que converte toda borda espessa da planilha em média
+                {"fn": aplicar_codigo_02, "numero": "02", "nome": "Muda Bordas"},
             ])
             _ir_para("codigo_14")
         return

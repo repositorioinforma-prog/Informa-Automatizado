@@ -219,6 +219,223 @@ def _simular_linhas_quebra_palavra(trecho, caracteres_por_linha):
     return max(1, linhas)
 
 
+# ---------------------------------------------------------------------------
+# Altura das labels da coluna A — regra fixa por nº de caracteres
+# ---------------------------------------------------------------------------
+# Regra definida pelo Lucas (coluna A com largura 21): até 23 caracteres
+# (contando espaços) -> altura 15; até 46 -> 30; até 69 -> 45; e assim
+# por diante (15 por "faixa" de 23 caracteres). Primeira versão usava 21;
+# aumentada para 23 a pedido do Lucas. Substitui, só para as
+# labels das tabelas, a estimativa por largura/fonte (que dava alturas
+# "quebradas" tipo 16 ou 32 e deixava o relatório irregular).
+CARACTERES_POR_LINHA_LABEL = 23
+ALTURA_POR_LINHA_LABEL = 15
+
+_PREFIXOS_NAO_LABEL = ("pergunta:", "titulo:", "título:")
+
+
+def altura_label_por_caracteres(
+    texto,
+    caracteres_por_linha=CARACTERES_POR_LINHA_LABEL,
+    altura_por_linha=ALTURA_POR_LINHA_LABEL,
+):
+    """Altura da label pela regra fixa de caracteres (23 -> 15, 46 -> 30...).
+
+    Conta todos os caracteres, inclusive espaços. Se a label tiver quebra
+    manual (\\n, ex.: rótulos formatados pelo código 04), cada trecho conta
+    as próprias faixas e o total é somado — "Aluno em domicílio\\n(Educação
+    Pública)" = 1 + 1 faixa = 30. Espaços sobrando nas pontas de cada
+    trecho (comuns em exportação do SPSS) são ignorados.
+    """
+    if texto is None:
+        return altura_por_linha
+    trechos = str(texto).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    linhas = 0
+    for trecho in trechos:
+        n = len(trecho.strip())
+        linhas += max(1, -(-n // caracteres_por_linha))  # teto da divisão
+    return max(1, linhas) * altura_por_linha
+
+
+# --- Medição por largura real (fonte proporcional) ------------------------
+# A contagem de caracteres sozinha falha com textos de letras largas: a
+# DIN é proporcional ("W", "R", "m" ocupam 3-4x um "i"/"l"), e o Excel
+# não quebra no meio da palavra. Caso real: "Waguinho - Republicanos" tem
+# 23 caracteres (regra -> 15), mas na coluna A (21) o Excel jogava
+# "Republicanos" pra linha de baixo e o texto ficava cortado.
+#
+# Por isso a altura da label é o MAIOR entre:
+#   1) a regra do Lucas por caracteres (23 -> 15, 46 -> 30...) — piso;
+#   2) a quebra simulada palavra por palavra usando a largura real de
+#      cada caractere (métricas de Helvetica, proporção bem próxima da
+#      DIN; unidades de 1/1000 do tamanho da fonte).
+#
+# LARGURA_UTIL_LABEL_COLUNA_A: largura útil (nessas unidades, fonte 10)
+# de uma célula da coluna A (largura 21 + ajuste). Calibrada entre as
+# labels de 22-23 caracteres que cabem numa linha (~10.500-10.700) e o
+# caso real que estourou ("Waguinho - Republicanos" = 11.389). Se algum
+# caso ainda cortar, é só baixar este número; se aparecer label alta
+# demais, subir.
+LARGURA_UTIL_LABEL_COLUNA_A = 11000
+LARGURA_REFERENCIA_COLUNA_A = 21.78  # 21 + AJUSTE_LARGURA_COLUNA_DIN
+
+_LARGURAS_CARACTERES = {}
+for _largura, _chars in (
+    (222, "'`ijl"), (260, "|"), (278, " !,./:;I[\\]ft"), (333, "()-r"),
+    (334, "{}"), (355, '"'), (389, "*"), (469, "^"), (500, "Jcksvxyz"),
+    (556, "#$0123456789?L_abdeghnopqu"), (584, "+<=>~"), (611, "FTZ"),
+    (667, "&ABEKPSVXY"), (722, "CDHNRUw"), (778, "GOQ"), (833, "Mm"),
+    (889, "%"), (944, "W"), (1015, "@"),
+):
+    for _ch in _chars:
+        _LARGURAS_CARACTERES[_ch] = _largura
+_LARGURA_CARACTERE_PADRAO = 556
+
+
+def largura_texto_unidades(texto):
+    """Largura do texto em 1/1000 do tamanho da fonte (acentos contam
+    como a letra base: 'ã' = 'a')."""
+    import unicodedata
+    total = 0
+    for ch in str(texto):
+        base = unicodedata.normalize("NFKD", ch)[:1] or ch
+        total += _LARGURAS_CARACTERES.get(base, _LARGURA_CARACTERE_PADRAO)
+    return total
+
+
+def linhas_por_largura(texto, largura_util):
+    """Quantas linhas o Excel usa para `texto` numa célula com
+    `largura_util` (unidades de `largura_texto_unidades`), simulando a
+    quebra palavra por palavra. Quebras manuais (\\n) somam trechos.
+    Palavra maior que a linha inteira é partida (como o Excel faz)."""
+    largura_util = max(1, largura_util)
+    espaco = _LARGURAS_CARACTERES[" "]
+    trechos = str(texto).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    total = 0
+    for trecho in trechos:
+        palavras = trecho.strip().split()
+        linhas = 1
+        ocupado = 0
+        for palavra in palavras:
+            w = largura_texto_unidades(palavra)
+            if ocupado == 0:
+                if w > largura_util:
+                    extras = -(-w // largura_util) - 1
+                    linhas += extras
+                    w -= extras * largura_util
+                ocupado = w
+            elif ocupado + espaco + w <= largura_util:
+                ocupado += espaco + w
+            else:
+                linhas += 1
+                if w > largura_util:
+                    extras = -(-w // largura_util) - 1
+                    linhas += extras
+                    w -= extras * largura_util
+                ocupado = w
+        total += linhas
+    return max(1, total)
+
+
+def altura_label_celula(ws, cel):
+    """Altura da label em `cel` (coluna A): maior entre a regra por
+    caracteres (piso) e a quebra simulada por largura real."""
+    altura_regra = altura_label_por_caracteres(cel.value)
+    tamanho_fonte = float(cel.font.size or 10) if cel.font else 10.0
+    largura_coluna = largura_total_mesclagem(ws, cel)
+    # (o recuo das labels já está embutido na calibração, feita com
+    # relatório real)
+    largura_util = (
+        LARGURA_UTIL_LABEL_COLUNA_A * (largura_coluna / LARGURA_REFERENCIA_COLUNA_A)
+    ) * (10.0 / tamanho_fonte)
+    altura_largura = linhas_por_largura(cel.value, largura_util) * ALTURA_POR_LINHA_LABEL
+    return max(altura_regra, altura_largura)
+
+
+# Textos que, onde aparecerem (qualquer coluna), fixam a altura da linha
+# inteira — com prioridade sobre qualquer outra regra de altura do
+# código 09. Comparação sem acento, sem diferença de maiúsculas e com
+# espaços/quebras de linha normalizados ("Denominações\nCatólicas" e
+# "DENOMINACOES CATOLICAS" também valem). Pedido do Lucas: 15.
+ALTURAS_FIXAS_POR_TEXTO = {
+    "denominacoes catolicas": 15,
+    "denominacoes evangelicas": 15,
+}
+
+
+def _normalizar_para_comparacao(texto):
+    import unicodedata
+    sem_acento = "".join(
+        ch for ch in unicodedata.normalize("NFKD", str(texto))
+        if not unicodedata.combining(ch)
+    )
+    return " ".join(sem_acento.lower().split())
+
+
+def altura_fixa_por_texto(ws, r, max_col):
+    """Se a linha `r` contiver algum texto de `ALTURAS_FIXAS_POR_TEXTO`,
+    retorna a altura fixa correspondente; senão, None."""
+    for c in range(1, max_col + 1):
+        valor = ws.cell(row=r, column=c).value
+        if not isinstance(valor, str):
+            continue
+        normalizado = _normalizar_para_comparacao(valor)
+        for termo, altura in ALTURAS_FIXAS_POR_TEXTO.items():
+            if termo in normalizado:
+                return altura
+    return None
+
+
+def linhas_com_mesclagem_na_coluna_a(ws):
+    """Linhas em que a coluna A está numa mesclagem que NÃO é de label.
+
+    Label de tabela pode vir mesclada em A:B numa linha só (comum em
+    tabelas estreitas, como as do Total Automático) — essa continua
+    valendo como label. Qualquer outra mesclagem que pegue a coluna A
+    (mais de uma linha, ou indo além da coluna B — títulos, perguntas,
+    legendas e notas, mescladas na largura da tabela) tira a linha da
+    regra de label.
+
+    Calculado uma vez só por planilha (varrer `merged_cells` célula a
+    célula é caro — ver learnings de performance)."""
+    linhas = set()
+    for rng in ws.merged_cells.ranges:
+        if not (rng.min_col <= 1 <= rng.max_col):
+            continue
+        mesclagem_de_label = rng.min_row == rng.max_row and rng.max_col <= 2
+        if not mesclagem_de_label:
+            linhas.update(range(rng.min_row, rng.max_row + 1))
+    return linhas
+
+
+def eh_label_de_tabela_coluna_a(ws, r, max_col, linhas_mescladas_a):
+    """True se a célula A{r} é uma label de tabela (não título/pergunta).
+
+    Critérios:
+    - texto não vazio na coluna A;
+    - não começa com 'Pergunta:' / 'Titulo:' / 'Título:';
+    - A{r} não está numa mesclagem "de título" (várias linhas, ou além da
+      coluna B) — ver `linhas_com_mesclagem_na_coluna_a`. Mesclagem A:B
+      numa linha só é aceita como label;
+    - a linha tem algum valor a partir da coluna B — ou seja, é uma linha
+      DE TABELA (inclui tabelas só com Total, onde o dado pode estar na
+      coluna B). Isso deixa de fora legendas/notas soltas na coluna A
+      (a etapa de Legendas roda antes do código 09).
+    """
+    valor = ws.cell(row=r, column=1).value
+    if not isinstance(valor, str) or not valor.strip():
+        return False
+    if valor.strip().lower().startswith(_PREFIXOS_NAO_LABEL):
+        return False
+    if r in linhas_mescladas_a:
+        return False
+    for c in range(2, max_col + 1):
+        v = ws.cell(row=r, column=c).value
+        if v is not None and v != "":
+            return True
+    return False
+
+
 def estimar_altura_calculada(texto, largura_total_colunas, tamanho_fonte):
     """
     Estimativa (aproximada) da altura que uma célula com quebra de linha

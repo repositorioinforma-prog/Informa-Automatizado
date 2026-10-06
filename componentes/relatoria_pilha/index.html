@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Pilha de exportação</title>
+<!--
+  Pilha/fila de exportação na barra lateral do Streamlit (Cruzamentos,
+  Mapa de Calor...). Layout "cards expansíveis": cada item mostra o título;
+  ao clicar abre os detalhes.
+  Recebe args: titulo, subtitulo, vazio_msg, ack e
+    itens=[{sig, title,
+            secoes:[{rotulo, texto, cor}],      (textos com marcador colorido)
+            imagem: "data:image/...",            (miniatura opcional)
+            chips:[{rotulo, cor, valor}],        (ex.: paleta Baixo/Médio/Alto)
+            row, col}]                            (atalho antigo dos Cruzamentos)
+  Envia: {nonce, acoes:[{id, acao:"remover", sig}]} (ações pendentes até o ack).
+-->
+<style>
+  :root{
+    --bg:#1b2434; --card:#202b3e; --card-open:#1d2740; --line:#2e3b55; --line-open:#3b5bdb;
+    --txt:#f3f6fb; --muted:#9aa8c0; --badge:#1d4ed8; --badge-txt:#e8efff; --red:#f05252; --red-bg:rgba(240,82,82,.12);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:transparent;color:var(--txt);
+    font-family:"Source Sans Pro","Source Sans 3",system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+  .painel{background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:14px 12px 12px}
+  .topo{display:flex;align-items:center;gap:10px;margin:2px 2px 12px}
+  .topo svg{flex:none}
+  .topo h3{flex:1;margin:0;font-size:17px;font-weight:700;letter-spacing:.1px}
+  .qtd{min-width:30px;height:30px;padding:0 9px;border-radius:999px;background:#24365e;color:#dbe6ff;
+       display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px}
+  .vazio{color:var(--muted);font-size:13.5px;line-height:1.45;padding:10px 6px 4px}
+  .lista{display:flex;flex-direction:column;gap:9px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;
+        transition:border-color .15s ease, background .15s ease}
+  .card.aberto{background:var(--card-open);border-color:var(--line-open)}
+  .card.saindo{opacity:.45;pointer-events:none}
+  .cab{display:flex;align-items:center;gap:10px;padding:9px 8px 9px 9px;cursor:pointer;user-select:none}
+  .cab:hover .tit{color:#fff}
+  .num{flex:none;min-width:36px;height:34px;border-radius:9px;background:var(--badge);color:var(--badge-txt);
+       display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;
+       font-variant-numeric:tabular-nums}
+  .tit{flex:1;min-width:0;font-weight:700;font-size:14px;line-height:1.3;color:#e9eef8;
+       display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+  .card.aberto .tit{-webkit-line-clamp:unset;display:block}
+  .ico{flex:none;width:30px;height:30px;border-radius:8px;border:0;background:transparent;cursor:pointer;
+       display:flex;align-items:center;justify-content:center;padding:0}
+  .chev{color:#c4cfe3}
+  .chev svg{transition:transform .18s ease}
+  .card.aberto .chev svg{transform:rotate(180deg)}
+  .lixo{color:var(--red)}
+  .lixo:hover{background:var(--red-bg)}
+  .corpo{display:none;padding:2px 12px 12px 14px}
+  .card.aberto .corpo{display:block}
+  .sec{font-size:13px;color:var(--muted);margin:6px 0 6px}
+  .perg{position:relative;display:flex;gap:10px;padding:0 0 10px 0}
+  .perg .bol{flex:none;width:22px;height:22px;border-radius:999px;border:1.5px solid #5b6b88;background:#24304a;
+       display:flex;align-items:center;justify-content:center;margin-top:1px}
+  .perg .bol i{width:8px;height:8px;border-radius:999px;display:block}
+  .perg.base .bol i{background:#60a5fa}
+  .perg.cruz .bol i{background:#a78bfa}
+  .perg .txt{font-size:13.5px;line-height:1.45;color:#dfe6f3;overflow-wrap:anywhere}
+  .trilho{border-left:1.5px solid #34425e;margin-left:10px;padding-left:12px}
+  .trilho .perg{margin-left:-24px}
+  .sub{font-size:12.5px;color:var(--muted);margin:-8px 2px 12px}
+  .sub.ok{color:#86efac}
+  .sub.aviso{color:#fcd34d}
+  .mini{display:block;width:100%;border-radius:9px;border:1px solid var(--line);margin:4px 0 10px;background:#0f172a}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 10px}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border-radius:999px;background:#24304a;
+        border:1px solid #34425e;font-size:12.5px;color:#dfe6f3}
+  .chip i{width:12px;height:12px;border-radius:4px;display:inline-block;border:1px solid rgba(255,255,255,.35)}
+  .chip b{font-weight:800;color:#fff}
+</style>
+</head>
+<body>
+<div class="painel">
+  <div class="topo">
+    <svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">
+      <rect x="2" y="3" width="13" height="15" rx="2.5" fill="#34d399"/>
+      <rect x="7" y="7" width="13" height="15" rx="2.5" fill="#f87171" opacity=".92"/>
+      <rect x="11" y="10" width="13" height="14" rx="2.5" fill="#60a5fa"/>
+    </svg>
+    <h3 id="titulo">Pilha de exportação</h3>
+    <div class="qtd" id="qtd">0</div>
+  </div>
+  <div class="sub" id="sub" hidden></div>
+  <div class="lista" id="lista"></div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var NONCE = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  var seq = 0, pendentes = [], abertos = {}, ultimaAltura = 0, saindo = {};
+  var qtdAnterior = -1, bloqueioAte = 0; // evita que um clique duplo apague o card que "subiu"
+
+  function post(type, extra){
+    var m = {isStreamlitMessage:true, type:type};
+    for(var k in (extra||{})) m[k] = extra[k];
+    window.parent.postMessage(m, "*");
+  }
+  function enviar(){
+    post("streamlit:setComponentValue", {value:{nonce:NONCE, acoes:pendentes.slice()}, dataType:"json"});
+  }
+  function esc(s){
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+  function ajustarAltura(){
+    var h = Math.ceil(document.documentElement.getBoundingClientRect().height) + 2;
+    if(Math.abs(h - ultimaAltura) > 1){ ultimaAltura = h; post("streamlit:setFrameHeight", {height:h}); }
+  }
+
+  var CHEV = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+  var LIXO = '<svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+
+  function corpoHTML(it){
+    var secoes = it.secoes || [
+      {rotulo:"Pergunta base", texto:it.row, cor:"#60a5fa"},
+      {rotulo:"Cruzamento", texto:it.col, cor:"#a78bfa"}
+    ];
+    var h = "";
+    if(it.imagem) h += '<img class="mini" alt="" src="' + esc(it.imagem) + '">';
+    if(it.chips && it.chips.length){
+      h += '<div class="chips">' + it.chips.map(function(c){
+        return '<span class="chip">' + (c.cor ? '<i style="background:' + esc(c.cor) + '"></i>' : '') +
+               esc(c.rotulo) + (c.valor != null && c.valor !== "" ? ' <b>' + esc(c.valor) + '</b>' : '') + '</span>';
+      }).join("") + '</div>';
+    }
+    secoes.forEach(function(sc){
+      if(sc.texto == null || sc.texto === "") return;
+      h += '<div class="sec">' + esc(sc.rotulo) + '</div>' +
+           '<div class="trilho"><div class="perg"><div class="bol"><i style="background:' + esc(sc.cor || "#60a5fa") +
+           '"></i></div><div class="txt">' + esc(sc.texto) + '</div></div></div>';
+    });
+    return h;
+  }
+
+  function render(itens, vazioMsg){
+    document.getElementById("qtd").textContent = String(itens.length);
+    var host = document.getElementById("lista");
+    if(!itens.length){
+      host.innerHTML = '<div class="vazio">' + esc(vazioMsg || "Vazia.") + '</div>';
+      ajustarAltura();
+      return;
+    }
+    var html = "";
+    itens.forEach(function(it, i){
+      var n = (i + 1 < 10 ? "0" : "") + (i + 1);
+      var cls = "card" + (abertos[it.sig] ? " aberto" : "") + (saindo[it.sig] ? " saindo" : "");
+      html += '<div class="' + cls + '" data-sig="' + esc(it.sig) + '">' +
+        '<div class="cab" data-act="abrir">' +
+          '<div class="num">' + n + '</div>' +
+          '<div class="tit" title="' + esc(it.title) + '">' + esc(it.title) + '</div>' +
+          '<button class="ico chev" type="button" data-act="abrir" aria-label="Mostrar detalhes">' + CHEV + '</button>' +
+          '<button class="ico lixo" type="button" data-act="remover" title="Remover" aria-label="Remover">' + LIXO + '</button>' +
+        '</div>' +
+        '<div class="corpo">' + corpoHTML(it) + '</div>' +
+      '</div>';
+    });
+    host.innerHTML = html;
+    ajustarAltura();
+  }
+
+  document.getElementById("lista").addEventListener("click", function(ev){
+    var alvo = ev.target.closest("[data-act]");
+    var card = ev.target.closest(".card");
+    if(!alvo || !card) return;
+    if(Date.now() < bloqueioAte) return;
+    var sig = card.getAttribute("data-sig");
+    if(alvo.getAttribute("data-act") === "remover"){
+      ev.stopPropagation();
+      if(saindo[sig]) return;
+      saindo[sig] = true;
+      card.classList.add("saindo");
+      seq += 1;
+      pendentes.push({id:seq, acao:"remover", sig:sig});
+      enviar();
+      return;
+    }
+    abertos[sig] = !abertos[sig];
+    card.classList.toggle("aberto", !!abertos[sig]);
+    ajustarAltura();
+  });
+
+  window.addEventListener("message", function(e){
+    var d = e.data || {};
+    if(d.type !== "streamlit:render") return;
+    var a = d.args || {};
+    var ack = (a.ack || {})[NONCE] || 0;
+    if(ack) pendentes = pendentes.filter(function(p){ return p.id > ack; });
+    var itens = a.itens || [];
+    var vivos = {};
+    itens.forEach(function(it){ vivos[it.sig] = true; });
+    for(var s in saindo){ if(!vivos[s]) delete saindo[s]; }
+    if(!pendentes.length) saindo = {};
+    if(qtdAnterior >= 0 && itens.length < qtdAnterior) bloqueioAte = Date.now() + 600;
+    qtdAnterior = itens.length;
+    if(a.titulo) document.getElementById("titulo").textContent = a.titulo;
+    var sub = document.getElementById("sub");
+    sub.hidden = !a.subtitulo;
+    sub.textContent = a.subtitulo || "";
+    sub.className = "sub" + (a.subtitulo_tipo ? " " + a.subtitulo_tipo : "");
+    render(itens, a.vazio_msg);
+  });
+  if(window.ResizeObserver) new ResizeObserver(ajustarAltura).observe(document.body);
+  document.addEventListener("load", function(e){ if(e.target && e.target.tagName === "IMG") ajustarAltura(); }, true);
+  post("streamlit:componentReady", {apiVersion:1});
+})();
+</script>
+</body>
+</html>

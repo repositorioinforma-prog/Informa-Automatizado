@@ -20,6 +20,9 @@ from analises.ponderacao import modulo_ponderacao
 from analises.divisor_tabelas import modulo_divisor_tabelas
 from analises.padronizacao_titulos import modulo_padronizacao_titulos
 from analises.revisor_syntax import modulo_revisor_syntax
+from analises.cruzamentos import modulo_cruzamentos
+from analises.mapa_calor import modulo_mapa_calor
+from analises.correlacao import modulo_correlacao
 from analises.correspondencia_multipla import analise_correspondencia_multipla
 from analises.correspondencia_simples import analise_correspondencia
 from core.dados import carregar_dados
@@ -283,6 +286,9 @@ def main():
             "Divisor de Tabelas de Regioes",
             "Padronização de Títulos",
             "Revisor de Syntax SPSS",
+            "Cruzamentos (Tabelas)",
+            "Mapa de Calor",
+            "Matriz de Correlação",
         ),
     )
 
@@ -337,6 +343,19 @@ def main():
 
     if analise == "Revisor de Syntax SPSS":
         modulo_revisor_syntax()
+        return
+
+    # ferramentas portadas do app desktop "Relatória Analítica" (liberadas uma por vez)
+    if analise == "Cruzamentos (Tabelas)":
+        modulo_cruzamentos()
+        return
+
+    if analise == "Mapa de Calor":
+        modulo_mapa_calor()
+        return
+
+    if analise == "Matriz de Correlação":
+        modulo_correlacao()
         return
 
     uploaded_file = st.file_uploader("Carregar Arquivo", type=["csv", "xlsx", "sav"])

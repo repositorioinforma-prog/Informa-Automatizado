@@ -17,6 +17,12 @@ from openpyxl.utils import get_column_letter
 from core.planilha_utils import (
     estimar_altura_calculada,
     estimar_numero_linhas,
+    altura_label_por_caracteres,
+    eh_label_de_tabela_coluna_a,
+    linhas_com_mesclagem_na_coluna_a,
+    altura_fixa_por_texto,
+    altura_label_celula,
+    ALTURA_POR_LINHA_LABEL,
     inserir_linhas_seguro,
     largura_total_mesclagem,
     remover_linhas_seguro,
@@ -326,6 +332,147 @@ def aplicar_codigo_02(ws):
                 alterados += 1
 
     return alterados
+
+
+# =========================================================
+# Código 17 — Bordas espessas no cabeçalho das tabelas segmentadas
+# =========================================================
+def _com_lados_espessos(borda, lados):
+    """Cópia da borda com os `lados` ('left','right','top','bottom')
+    trocados por espessa — preserva os demais lados e a cor existente."""
+    def _lado(nome):
+        atual = getattr(borda, nome)
+        if nome not in lados:
+            return atual
+        cor = atual.color if (atual is not None and atual.color is not None) else None
+        return Side(style="thick", color=cor)
+    return Border(
+        left=_lado("left"), right=_lado("right"),
+        top=_lado("top"), bottom=_lado("bottom"),
+        diagonal=borda.diagonal, diagonalUp=borda.diagonalUp,
+        diagonalDown=borda.diagonalDown, outline=borda.outline,
+        vertical=borda.vertical, horizontal=borda.horizontal,
+    )
+
+
+def _engrossar(ws, r, c, lados, mesclagem_de=None):
+    """Engrossa os `lados` da célula (r, c).
+
+    Se a célula faz parte de uma mesclagem e o lado está na BORDA EXTERNA
+    dela, engrossa o mesmo lado também na célula âncora (canto superior
+    esquerdo): ao carregar o arquivo, o openpyxl recopia as bordas
+    externas da mesclagem a partir da âncora (`MergedCellRange.format`),
+    e como o assistente recarrega o arquivo a cada etapa, sem isso a
+    borda espessa da base/direita de uma célula mesclada voltava a ser
+    fina na etapa seguinte."""
+    cel = ws.cell(row=r, column=c)
+    cel.border = _com_lados_espessos(cel.border, lados)
+    rng = (mesclagem_de or {}).get((r, c))
+    if rng is None:
+        return
+    lados_ancora = set()
+    if "top" in lados and r == rng.min_row:
+        lados_ancora.add("top")
+    if "bottom" in lados and r == rng.max_row:
+        lados_ancora.add("bottom")
+    if "left" in lados and c == rng.min_col:
+        lados_ancora.add("left")
+    if "right" in lados and c == rng.max_col:
+        lados_ancora.add("right")
+    if lados_ancora and (r, c) != (rng.min_row, rng.min_col):
+        ancora = ws.cell(row=rng.min_row, column=rng.min_col)
+        ancora.border = _com_lados_espessos(ancora.border, lados_ancora)
+
+
+def _mapa_mesclagens(ws):
+    mapa = {}
+    for rng in ws.merged_cells.ranges:
+        for r in range(rng.min_row, rng.max_row + 1):
+            for c in range(rng.min_col, rng.max_col + 1):
+                mapa[(r, c)] = rng
+    return mapa
+
+
+def _engrossar_vizinho_se_tiver_borda(ws, r, c, lado, mesclagem_de=None):
+    """O Excel guarda a borda compartilhada nas DUAS células vizinhas; se
+    a vizinha já tem borda fina/média nesse lado, ela também vira
+    espessa pra não brigar com a nossa. Se não tem borda, não mexe."""
+    if r < 1 or c < 1:
+        return
+    cel = ws.cell(row=r, column=c)
+    if getattr(cel.border, lado) is not None and getattr(cel.border, lado).style:
+        _engrossar(ws, r, c, {lado}, mesclagem_de)
+
+
+def _ultima_coluna_da_tabela(ws, linha_ini, linha_fim, max_col):
+    """Última coluna do cabeçalho: a maior coluna com valor nas linhas
+    do cabeçalho ou na primeira linha de dados logo abaixo, ou coberta
+    por uma mesclagem do cabeçalho."""
+    ultima = 2
+    for r in range(linha_ini, linha_fim + 2):
+        for c in range(max_col, 2, -1):
+            v = ws.cell(row=r, column=c).value
+            if v is not None and str(v).strip() != "":
+                ultima = max(ultima, c)
+                break
+    for rng in ws.merged_cells.ranges:
+        if rng.max_row >= linha_ini and rng.min_row <= linha_fim and rng.min_col >= 2:
+            ultima = max(ultima, rng.max_col)
+    return ultima
+
+
+def aplicar_codigo_17(ws):
+    """Bordas espessas (thick) no contorno do cabeçalho das tabelas segmentadas.
+
+    Identifica cada cabeçalho pela célula MESCLADA na coluna B com o texto
+    "Total": as linhas do cabeçalho são as linhas dessa mesclagem (topo e
+    base do "Total"), e a largura vai da coluna A até a última coluna da
+    tabela. Aplica borda espessa em:
+      - linha de cima e linha de baixo do cabeçalho (A até a última coluna);
+      - lateral esquerda (coluna A) e lateral direita (última coluna);
+      - laterais esquerda e direita da coluna "Total" (B).
+    As divisórias internas entre as subcategorias continuam como estão.
+
+    Precisa rodar DEPOIS do código 02 (que rebaixa toda borda espessa pra
+    média) e das etapas que mudam a estrutura da tabela (05, 07).
+    Retorna o número de cabeçalhos formatados.
+    """
+    max_col = ws.max_column
+    faixas_total = []
+    for rng in ws.merged_cells.ranges:
+        if not (rng.min_col <= 2 <= rng.max_col):
+            continue
+        if rng.min_col != 2:
+            continue
+        v = ws.cell(row=rng.min_row, column=2).value
+        if isinstance(v, str) and v.strip().lower() == "total":
+            faixas_total.append(rng)
+
+    mapa = _mapa_mesclagens(ws)
+    formatados = 0
+    for rng in sorted(faixas_total, key=lambda x: x.min_row):
+        topo, base = rng.min_row, rng.max_row
+        col_total_fim = rng.max_col
+        ultima = _ultima_coluna_da_tabela(ws, topo, base, max_col)
+
+        for c in range(1, ultima + 1):
+            _engrossar(ws, topo, c, {"top"}, mapa)
+            _engrossar(ws, base, c, {"bottom"}, mapa)
+            _engrossar_vizinho_se_tiver_borda(ws, topo - 1, c, "bottom", mapa)
+            _engrossar_vizinho_se_tiver_borda(ws, base + 1, c, "top", mapa)
+
+        for r in range(topo, base + 1):
+            _engrossar(ws, r, 1, {"left"}, mapa)
+            _engrossar(ws, r, ultima, {"right"}, mapa)
+            # laterais da coluna "Total"
+            _engrossar(ws, r, 2, {"left"}, mapa)
+            _engrossar(ws, r, col_total_fim, {"right"}, mapa)
+            _engrossar(ws, r, 1, {"right"}, mapa)
+            if col_total_fim + 1 <= ultima:
+                _engrossar(ws, r, col_total_fim + 1, {"left"}, mapa)
+            _engrossar_vizinho_se_tiver_borda(ws, r, ultima + 1, "left", mapa)
+        formatados += 1
+    return formatados
 
 
 # =========================================================
@@ -895,8 +1042,46 @@ def _celulas_gatilho_altura_fixa(ws, r, max_col):
     return None, []
 
 
+def _altura_linha_de_label(ws, r, max_col):
+    """Altura de uma linha de tabela cuja coluna A é uma label.
+
+    A label (coluna A) segue a regra fixa de caracteres
+    (`altura_label_por_caracteres`: até 23 -> 15, até 46 -> 30...) como
+    piso, podendo subir se a largura real do texto não couber (ver
+    `altura_label_celula` em core/planilha_utils.py), e
+    ganha "Quebrar Texto Automaticamente" (sem isso o Excel não quebra e
+    a altura extra ficaria sobrando). Se alguma OUTRA célula de texto da
+    linha, com quebra ativada, precisar de mais linhas, prevalece a
+    maior — também em degraus de 15. Números/percentuais são ignorados.
+    """
+    cel_a = ws.cell(row=r, column=1)
+    if not (cel_a.alignment and cel_a.alignment.wrap_text):
+        cel_a.alignment = _com_wrap_text(cel_a.alignment, True)
+    altura = altura_label_celula(ws, cel_a)
+    for c in range(2, max_col + 1):
+        cel = ws.cell(row=r, column=c)
+        if not isinstance(cel.value, str) or not cel.value.strip():
+            continue
+        if not (cel.alignment and cel.alignment.wrap_text):
+            continue
+        largura = largura_total_mesclagem(ws, cel)
+        n_linhas = estimar_numero_linhas(cel.value, largura, cel.font.size or 10)
+        altura = max(altura, n_linhas * ALTURA_POR_LINHA_LABEL)
+    return altura
+
+
 def aplicar_codigo_09(ws):
     """
+    LABELS DA COLUNA A (regra fixa, pedido do Lucas): em linha de tabela
+    cuja coluna A tem uma label (não título, não pergunta, não mesclada),
+    a altura é por nº de caracteres — até 23 -> 15, até 46 -> 30, até 69
+    -> 45... (ver `_altura_linha_de_label`). As demais linhas continuam
+    com a estimativa descrita abaixo.
+
+    PRIORIDADE MÁXIMA: linha que contenha "Denominações Católicas" ou
+    "Denominações Evangélicas" (em qualquer coluna) fica com altura 15
+    (ver `ALTURAS_FIXAS_POR_TEXTO` em core/planilha_utils.py).
+
     Para toda célula com quebra de linha (WrapText) ativada, estima a
     altura necessária (aproximação por contagem de caracteres — ver
     aviso em `core.planilha_utils.estimar_altura_calculada`) e aplica na
@@ -920,7 +1105,15 @@ def aplicar_codigo_09(ws):
     # grandes. Calcula uma vez só aqui, fora dos laços.
     max_col = ws.max_column
     max_row = ws.max_row
+    linhas_mescladas_a = linhas_com_mesclagem_na_coluna_a(ws)
     for r in range(1, max_row + 1):
+        altura_texto = altura_fixa_por_texto(ws, r, max_col)
+        if altura_texto is not None:
+            if ws.row_dimensions[r].height != float(altura_texto):
+                ws.row_dimensions[r].height = float(altura_texto)
+                alterados += 1
+            continue
+
         altura_fixa, colunas_batidas = _celulas_gatilho_altura_fixa(ws, r, max_col)
         if altura_fixa is not None:
             for c in colunas_batidas:
@@ -928,6 +1121,13 @@ def aplicar_codigo_09(ws):
                 cel.alignment = _com_wrap_text(cel.alignment, True)
             if ws.row_dimensions[r].height != float(altura_fixa):
                 ws.row_dimensions[r].height = float(altura_fixa)
+                alterados += 1
+            continue
+
+        if eh_label_de_tabela_coluna_a(ws, r, max_col, linhas_mescladas_a):
+            nova_altura = float(_altura_linha_de_label(ws, r, max_col))
+            if ws.row_dimensions[r].height != nova_altura:
+                ws.row_dimensions[r].height = nova_altura
                 alterados += 1
             continue
 

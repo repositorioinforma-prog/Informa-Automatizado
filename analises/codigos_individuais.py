@@ -40,6 +40,7 @@ from core.relatorio_automatizado_math import (
     aplicar_codigo_10,
     aplicar_codigo_11,
     aplicar_codigo_12,
+    aplicar_codigo_17,
     aplicar_codigo_14,
     aplicar_codigo_16,
     TERMOS_EXCLUSAO_CODIGO_03,
@@ -77,6 +78,10 @@ CODIGOS = [
     {"num": "15", "nome": "InserirCapasResultados", "tipo": "ws", "fn": aplicar_codigo_15},
     {
         "num": "16", "nome": "Índice / Sumário (por quebras de página)", "tipo": "ws", "fn": aplicar_codigo_16,
+    },
+    {
+        "num": "17", "nome": "Bordas espessas no cabeçalho das tabelas segmentadas",
+        "tipo": "ws", "fn": aplicar_codigo_17,
     },
 ]
 

@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import openpyxl
 import pandas as pd
-import pyreadstat
+from core.pyreadstat_seguro import pyreadstat
 import streamlit as st
 from openpyxl.comments import Comment
 from openpyxl.formatting.formatting import ConditionalFormattingList
@@ -24,8 +24,8 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
 from core.ponderacao_math import (
     calcular_razao_simples,
-    calcular_raking,
     categorias_validas,
+    diagnosticar_componentes,
     frequencia_percentual,
     gerar_syntax_spss,
     resumo_pesos,
@@ -35,6 +35,13 @@ from core.ponderacao_exclusoes_math import (
     sugerir_exclusoes_ponderacao,
 )
 
+
+# Configuração metodológica institucional. A interface não oferece métodos
+# alternativos para evitar que uma ponderação seja executada com uma regra
+# diferente do procedimento adotado pela equipe.
+METODO_PONDERACAO_FIXO = "Método atual — razão simples e multiplicação"
+TOLERANCIA_PONDERACAO_FIXA_PP = 2.0
+MAX_ITERACOES_COMPATIBILIDADE = 100
 
 # Regra apenas visual do registro histórico: diferenças exibidas entre
 # -2,10 e +2,10 p.p. permanecem sem preenchimento.
@@ -103,6 +110,74 @@ def _sugerir_variaveis(dados: pd.DataFrame, meta) -> list[str]:
     return escolhidas
 
 
+def _configurar_componentes_peso(variaveis: list[str], meta) -> dict[str, int]:
+    """Exibe a associação variável -> pesoN e preserva as escolhas na sessão.
+
+    A quantidade de variáveis é independente da quantidade de componentes.
+    Por padrão cada variável recebe peso1, peso2, ...; o usuário pode agrupar
+    várias variáveis no mesmo número de peso.
+    """
+    salvos = st.session_state.get("ponderacao_componentes_salvos", {})
+    if not isinstance(salvos, dict):
+        salvos = {}
+
+    linhas = []
+    for indice, variavel in enumerate(variaveis, start=1):
+        valor = salvos.get(variavel, indice)
+        try:
+            valor = max(1, int(valor))
+        except (TypeError, ValueError):
+            valor = indice
+        linhas.append(
+            {
+                "Variável SPSS": variavel,
+                "Rótulo": _nome_exibicao_variavel(meta, variavel),
+                "Componente": valor,
+            }
+        )
+
+    tabela = pd.DataFrame(linhas)
+    assinatura = hashlib.sha1("\x1f".join(variaveis).encode("utf-8")).hexdigest()[:12]
+    editada = st.data_editor(
+        tabela,
+        use_container_width=True,
+        hide_index=True,
+        disabled=["Variável SPSS", "Rótulo"],
+        column_config={
+            "Componente": st.column_config.NumberColumn(
+                "Peso",
+                min_value=1,
+                step=1,
+                format="%d",
+                help=(
+                    "Número do componente SPSS. Variáveis com o mesmo número são agrupadas "
+                    "no mesmo peso. Ex.: seis variáveis com valor 1 compõem juntas o peso1."
+                ),
+            ),
+        },
+        key=f"ponderacao_componentes_editor_{assinatura}",
+    )
+
+    atribuicoes: dict[str, int] = {}
+    for _, linha in editada.iterrows():
+        variavel = str(linha["Variável SPSS"])
+        valor = pd.to_numeric(pd.Series([linha["Componente"]]), errors="coerce").iloc[0]
+        if pd.isna(valor) or float(valor) < 1 or not float(valor).is_integer():
+            raise ValueError(
+                f"O peso atribuído a '{variavel}' deve ser um número inteiro maior ou igual a 1."
+            )
+        atribuicoes[variavel] = int(valor)
+
+    atualizados = dict(salvos)
+    atualizados.update(atribuicoes)
+    st.session_state["ponderacao_componentes_salvos"] = atualizados
+    return atribuicoes
+
+
+def _nome_componente(variavel: str, componentes_por_variavel: dict[str, int], indice_padrao: int) -> str:
+    return f"peso{int(componentes_por_variavel.get(variavel, indice_padrao))}"
+
+
 def _nome_arquivo_seguro(texto: str) -> str:
     nome = re.sub(r"[^0-9A-Za-zÀ-ÖØ-öø-ÿ._ -]+", "_", str(texto)).strip(" ._")
     nome = re.sub(r"\s+", "_", nome)
@@ -150,20 +225,17 @@ def _calcular_ponderacao_para_teste_exclusao(
     metodo_ui: str,
     tolerancia: float,
     max_iter: int,
+    componentes_por_variavel: dict[str, int] | None = None,
 ):
-    if metodo_ui.startswith("Método atual"):
-        return calcular_razao_simples(
-            dados,
-            alvos,
-            labels=labels_por_variavel,
-            tolerancia_pp=float(tolerancia),
-        )
-    return calcular_raking(
+    # Mantém os parâmetros antigos para compatibilidade interna, mas todo recálculo
+    # da interface segue obrigatoriamente o método institucional fixo.
+    _ = metodo_ui, max_iter
+    return calcular_razao_simples(
         dados,
         alvos,
         labels=labels_por_variavel,
         tolerancia_pp=float(tolerancia),
-        max_iteracoes=int(max_iter),
+        componentes_por_variavel=componentes_por_variavel,
     )
 
 
@@ -176,6 +248,7 @@ def _refinar_prefixo_exclusoes_pelo_peso(
     metodo_ui: str,
     tolerancia: float,
     max_iter: int,
+    componentes_por_variavel: dict[str, int] | None = None,
 ):
     """Procura o melhor N dentro da faixa permitida, após reponderar cada cenário avaliado.
 
@@ -208,6 +281,7 @@ def _refinar_prefixo_exclusoes_pelo_peso(
                 metodo_ui,
                 tolerancia,
                 max_iter,
+                componentes_por_variavel=componentes_por_variavel,
             )
         except Exception:
             return
@@ -224,15 +298,17 @@ def _refinar_prefixo_exclusoes_pelo_peso(
         # Primeiro menor diferença; em empate, menor k para preservar mais casos.
         return min(candidatos, key=lambda item: (item[1], item[0]))
 
-    metodo_simples = metodo_ui.startswith("Método atual")
-    limite_varredura_completa = 120 if metodo_simples else 24
+    # A interface utiliza exclusivamente razão simples; a busca pode usar a
+    # varredura mais completa sem ramificações por método.
+    metodo_simples = True
+    limite_varredura_completa = 120
 
     if total <= limite_varredura_completa:
         for k in range(1, total + 1):
             avaliar(k)
     else:
         # Etapa 1: cobre toda a faixa do N atual até o piso informado.
-        quantidade = 60 if metodo_simples else 12
+        quantidade = 60
         pontos = sorted(
             set(
                 max(1, min(total, int(round(x))))
@@ -386,6 +462,7 @@ def _assinatura_calculo_ponderacao(
     tolerancia: float,
     max_iter: int,
     identificacao: str,
+    componentes_por_variavel: dict[str, int] | None = None,
 ):
     """Identifica exatamente a configuração que originou um resultado.
 
@@ -417,6 +494,7 @@ def _assinatura_calculo_ponderacao(
         round(float(tolerancia), 10),
         int(max_iter),
         str(identificacao).strip(),
+        tuple((str(v), int((componentes_por_variavel or {}).get(v, i))) for i, v in enumerate(variaveis, start=1)),
     )
 
 
@@ -1299,6 +1377,7 @@ def _gerar_arquivo_historico_excel(
     labels_por_variavel: dict,
     arquivo_origem: str,
     identificacao: str,
+    componentes_por_variavel: dict[str, int] | None = None,
 ) -> bytes:
     """Preenche o modelo histórico enviado pelo usuário, adaptando blocos às variáveis do SAV."""
     modelo = Path(__file__).resolve().parents[1] / "assets" / "modelo_ponderacao.xlsx"
@@ -1385,6 +1464,9 @@ def _gerar_arquivo_historico_excel(
         _forcar_quebra_texto(ws[coord])
 
     diagnostico = resultado.diagnostico.copy()
+    componentes_por_variavel = componentes_por_variavel or {
+        variavel: indice for indice, variavel in enumerate(variaveis, start=1)
+    }
     linha_atual = 5
 
     for indice_var, variavel in enumerate(variaveis):
@@ -1595,6 +1677,8 @@ def _gerar_arquivo_historico_excel(
         ("Iterações", resultado.iteracoes),
         ("Casos na base", len(dados)),
         ("Casos com peso válido", resumo["casos_com_peso"]),
+        ("Variáveis de ponderação", len(variaveis)),
+        ("Componentes de peso", len(set(componentes_por_variavel.values()))),
         ("Peso mínimo", resumo["minimo"]),
         ("Peso máximo", resumo["maximo"]),
         ("Peso médio", resumo["media"]),
@@ -1606,7 +1690,7 @@ def _gerar_arquivo_historico_excel(
         reg.append([chave, valor])
     reg.append([])
     reg.append([
-        "Variável SPSS", "Rótulo da variável", "Código SPSS", "Categoria",
+        "Variável SPSS", "Rótulo da variável", "Componente", "Código SPSS", "Categoria",
         "% Amostra", "% Universo", "% Ponderada", "Diferença (p.p.)", "Status"
     ])
     cab_reg = reg.max_row
@@ -1614,30 +1698,33 @@ def _gerar_arquivo_historico_excel(
         c.font = Font(bold=True, color="FFFFFF")
         c.fill = PatternFill("solid", fgColor="1F4E78")
 
-    for variavel in variaveis:
+    for indice, variavel in enumerate(variaveis, start=1):
         bloco = diagnostico.loc[diagnostico["variavel"] == variavel]
         titulo = _nome_exibicao_variavel(meta, variavel)
+        componente = _nome_componente(variavel, componentes_por_variavel, indice)
         for _, linha in bloco.iterrows():
-            detalhe_row = reg.max_row + 1
+            diferenca = float(linha["percentual_com_peso"]) - float(linha["percentual_universo"])
+            status = "OK" if abs(diferenca) <= float(tolerancia_pp) else "REVISAR"
             reg.append([
                 variavel,
                 titulo,
+                componente,
                 linha["codigo"],
                 linha["categoria"],
                 linha["percentual_sem_peso"],
                 linha["percentual_universo"],
                 linha["percentual_com_peso"],
-                f"=G{detalhe_row}-F{detalhe_row}",
-                f'=IF(ABS(H{detalhe_row})<=$B$6,"OK","REVISAR")',
+                diferenca,
+                status,
             ])
-            for c in range(5, 9):
+            for c in range(6, 10):
                 reg.cell(reg.max_row, c).number_format = "0.00"
-            if linha["status"] == "REVISAR":
-                reg.cell(reg.max_row, 9).fill = PatternFill("solid", fgColor="FECACA")
+            if status == "REVISAR":
+                reg.cell(reg.max_row, 10).fill = PatternFill("solid", fgColor="FECACA")
             else:
-                reg.cell(reg.max_row, 9).fill = PatternFill("solid", fgColor="DCFCE7")
+                reg.cell(reg.max_row, 10).fill = PatternFill("solid", fgColor="DCFCE7")
 
-    larguras = [20, 34, 14, 30, 14, 14, 14, 18, 12]
+    larguras = [20, 34, 14, 14, 30, 14, 14, 14, 18, 12]
     for i, largura in enumerate(larguras, 1):
         reg.column_dimensions[openpyxl.utils.get_column_letter(i)].width = largura
     for row in reg.iter_rows():
@@ -1690,6 +1777,7 @@ def _gerar_calculo_ponderacao_excel(
     variaveis: list[str],
     arquivo_origem: str,
     identificacao: str,
+    componentes_por_variavel: dict[str, int] | None = None,
 ) -> bytes:
     """Gera a memória de cálculo dos pesos em formato semelhante à planilha histórica da equipe.
 
@@ -1782,7 +1870,11 @@ def _gerar_calculo_ponderacao_excel(
     resumo_ws["A11"].fill = amarelo
     resumo_ws["A11"].border = borda_fina
 
-    componentes = [f"peso{i}" for i in range(1, len(variaveis) + 1)]
+    componentes_norm = componentes_por_variavel or {
+        variavel: indice for indice, variavel in enumerate(variaveis, start=1)
+    }
+    numeros_componentes = sorted({int(componentes_norm.get(v, i)) for i, v in enumerate(variaveis, start=1)})
+    componentes = [f"peso{i}" for i in numeros_componentes]
     produto = "*".join(componentes)
     resumo_ws["A14"] = "Fórmula final no SPSS"
     resumo_ws["A14"].font = Font(name="Arial", size=10, bold=True)
@@ -1801,6 +1893,9 @@ def _gerar_calculo_ponderacao_excel(
     usados = {"Resumo"}
     diagnostico = resultado.diagnostico.copy()
     nomes_abas = {}
+    componentes_por_variavel = componentes_por_variavel or {
+        variavel: indice for indice, variavel in enumerate(variaveis, start=1)
+    }
 
     for indice, variavel in enumerate(variaveis, start=1):
         titulo = _nome_exibicao_variavel(meta, variavel)
@@ -1809,7 +1904,8 @@ def _gerar_calculo_ponderacao_excel(
         bloco = diagnostico.loc[diagnostico["variavel"] == variavel].copy()
 
         r = cab_resumo + indice
-        valores = [indice, variavel, titulo, f"peso{indice}", len(bloco), nome_aba]
+        componente = _nome_componente(variavel, componentes_por_variavel, indice)
+        valores = [indice, variavel, titulo, componente, len(bloco), nome_aba]
         for c, valor in enumerate(valores, start=1):
             cel = resumo_ws.cell(r, c, valor)
             estilizar_dado(cel, fill=branco, alinhamento="left" if c in (2, 3, 6) else "center")
@@ -1833,7 +1929,7 @@ def _gerar_calculo_ponderacao_excel(
 
         ws["A3"] = titulo
         ws["A3"].font = Font(name="Arial", size=12, bold=True)
-        ws["A4"] = f"Variável SPSS: {variavel} | Componente: peso{indice}"
+        ws["A4"] = f"Variável SPSS: {variavel} | Componente: {componente}"
         ws["A4"].font = Font(name="Arial", size=10, italic=True)
         ws.merge_cells("A4:F4")
 
@@ -1900,7 +1996,7 @@ def _gerar_calculo_ponderacao_excel(
         ws.cell(info, 3, "Componente")
         ws.cell(info, 3).font = Font(name="Arial", size=10, bold=True)
         ws.cell(info, 3).fill = verde_forte
-        ws.cell(info + 1, 3, f"peso{indice}")
+        ws.cell(info + 1, 3, componente)
         ws.cell(info + 1, 3).fill = verde
 
         syntax_start = info + 4
@@ -1913,7 +2009,17 @@ def _gerar_calculo_ponderacao_excel(
             rr = syntax_start + pos
             codigo_lit = _literal_spss_documentacao(linha["codigo"])
             fator = float(linha["fator"])
-            texto = f"IF ({variavel}={codigo_lit}) peso{indice}={format(fator, '.15g')}."
+            qtd_no_componente = sum(
+                1 for v in variaveis
+                if componentes_por_variavel.get(v) == componentes_por_variavel.get(variavel)
+            )
+            if qtd_no_componente > 1:
+                texto = (
+                    f"IF ({variavel}={codigo_lit}) {componente}="
+                    f"{componente}*{format(fator, '.15g')}."
+                )
+            else:
+                texto = f"IF ({variavel}={codigo_lit}) {componente}={format(fator, '.15g')}."
             ws.cell(rr, 1, texto)
             ws.merge_cells(start_row=rr, start_column=1, end_row=rr, end_column=6)
             ws.cell(rr, 1).font = Font(name="Consolas", size=9)
@@ -1937,7 +2043,10 @@ def _gerar_calculo_ponderacao_excel(
         ws.cell(final_row + 1, 1).fill = amarelo
 
     # Syntax completa no Resumo para documentar a composição final dos pesos.
-    syntax = gerar_syntax_spss(resultado.fatores)
+    syntax = gerar_syntax_spss(
+        resultado.fatores,
+        componentes_por_variavel=componentes_por_variavel,
+    )
     inicio_syntax = cab_resumo + len(variaveis) + 3
     resumo_ws.cell(inicio_syntax, 1, "SYNTAX SPSS GERADA")
     resumo_ws.merge_cells(start_row=inicio_syntax, start_column=1, end_row=inicio_syntax, end_column=6)
@@ -2020,74 +2129,18 @@ def modulo_ponderacao():
 
     st.success(f"Base carregada: {len(dados)} registros e {len(dados.columns)} variáveis.")
 
-    st.subheader("Universo reutilizável")
-    st.caption(
-        "O Universo fica salvo durante esta sessão mesmo quando você trocar a base .sav. "
-        "Também é possível importar um Modelo de Universo preenchido ou a aba Registro de uma ponderação anterior."
-    )
-    perfil = _perfil_sessao()
-    total_alvos_perfil = _contar_alvos_perfil(perfil)
-    if total_alvos_perfil:
-        st.info(
-            f"Universo disponível na sessão: {len(perfil.get('variaveis', {}))} variável(is), "
-            f"{total_alvos_perfil} categoria(s). Origem: {perfil.get('origem', 'Sessão atual')}."
-        )
-
-    arquivo_universo = st.file_uploader(
-        "Importar Universo preenchido (.xlsx)",
-        type=["xlsx"],
-        key="ponderacao_upload_universo_xlsx",
-        help=(
-            "Use um Modelo_Universo_*.xlsx preenchido ou um Ponderacao_*.xlsx histórico. "
-            "O app lê somente Variável SPSS + Código SPSS + % Universo."
-        ),
-    )
-    col_importar, col_esquecer = st.columns([3, 1])
-    if col_importar.button(
-        "Importar Universo",
-        key="ponderacao_importar_universo",
-        use_container_width=True,
-        disabled=arquivo_universo is None,
-    ):
-        try:
-            novo_perfil = _importar_perfil_universo_xlsx(
-                arquivo_universo.getvalue(), arquivo_universo.name
-            )
-            st.session_state["ponderacao_perfil_universo"] = novo_perfil
-            st.session_state["ponderacao_reaplicar_perfil"] = True
-            variaveis_importadas = [
-                v for v in novo_perfil["variaveis"] if v in dados.columns
-            ]
-            if variaveis_importadas:
-                st.session_state["ponderacao_variaveis"] = variaveis_importadas
-            perfil = novo_perfil
-            total_alvos_perfil = _contar_alvos_perfil(perfil)
-            st.success(
-                f"Universo importado: {len(perfil['variaveis'])} variável(is) e "
-                f"{total_alvos_perfil} categoria(s)."
-            )
-        except ValueError as exc:
-            st.error(str(exc))
-
-    if col_esquecer.button(
-        "Esquecer Universo",
-        key="ponderacao_esquecer_universo",
-        use_container_width=True,
-        disabled=not bool(total_alvos_perfil),
-        help="Remove apenas o Universo reutilizável salvo na sessão. Não altera arquivos no computador.",
-    ):
-        st.session_state["ponderacao_perfil_universo"] = _perfil_vazio()
-        st.session_state["ponderacao_reaplicar_perfil"] = False
-        perfil = st.session_state["ponderacao_perfil_universo"]
-        total_alvos_perfil = 0
-        st.success("Universo reutilizável removido da sessão.")
-
     identificacao_padrao = Path(uploaded.name).stem if getattr(uploaded, "name", None) else "Ponderação"
     identificacao = st.text_input(
         "Identificação do projeto / registro histórico",
         value=identificacao_padrao,
         key="ponderacao_identificacao",
         help="Esse nome será salvo no arquivo histórico e usado no nome do download.",
+    )
+
+    st.subheader("1. Variáveis da ponderação")
+    st.caption(
+        "Primeiro, escolha exatamente quais variáveis participarão da ponderação. "
+        "O modelo de Universo será montado somente com essa seleção."
     )
 
     perfil = _perfil_sessao()
@@ -2120,6 +2173,12 @@ def modulo_ponderacao():
         st.info("Selecione as variáveis que serão aproximadas ao universo.")
         return
 
+    st.subheader("2. Modelo e importação do Universo")
+    st.caption(
+        "Fluxo recomendado: selecione as variáveis acima, baixe o modelo, preencha somente "
+        "a coluna % Universo e importe o mesmo arquivo logo abaixo."
+    )
+
     modelo_universo = None
     erro_modelo_universo = None
     try:
@@ -2133,11 +2192,10 @@ def modulo_ponderacao():
     except Exception as exc:
         erro_modelo_universo = str(exc)
 
-    st.markdown("#### Modelo para preenchimento do Universo")
+    st.markdown("#### 2.1 Baixar o modelo")
     st.caption(
-        "O Analítico já montou um Excel com as variáveis selecionadas, códigos e labels "
-        "da base atual. Preencha somente a coluna % Universo, salve e depois importe o "
-        "mesmo arquivo acima quando precisar refazer a ponderação."
+        "O Excel já contém as variáveis selecionadas, seus códigos e labels. "
+        "Preencha somente a coluna % Universo e salve o arquivo."
     )
     nome_modelo = _nome_arquivo_seguro(identificacao.strip() or identificacao_padrao)
     if modelo_universo is not None:
@@ -2157,6 +2215,85 @@ def modulo_ponderacao():
         st.warning(
             "Não foi possível gerar o modelo do Universo nesta execução. "
             f"Detalhe técnico: {erro_modelo_universo}"
+        )
+
+    st.markdown("#### 2.2 Importar o modelo preenchido")
+    st.caption(
+        "Depois de preencher o modelo, importe-o aqui. Também é possível usar a aba Registro "
+        "de uma ponderação anterior. O pareamento é feito por variável + código SPSS."
+    )
+
+    arquivo_universo = st.file_uploader(
+        "Importar Universo preenchido (.xlsx)",
+        type=["xlsx"],
+        key="ponderacao_upload_universo_xlsx",
+        help=(
+            "Use um Modelo_Universo_*.xlsx preenchido ou um Ponderacao_*.xlsx histórico. "
+            "O app lê somente Variável SPSS + Código SPSS + % Universo."
+        ),
+    )
+
+    perfil = _perfil_sessao()
+    total_alvos_perfil = _contar_alvos_perfil(perfil)
+    col_importar, col_esquecer = st.columns([3, 1])
+    if col_importar.button(
+        "Importar Universo",
+        key="ponderacao_importar_universo",
+        use_container_width=True,
+        disabled=arquivo_universo is None,
+    ):
+        try:
+            novo_perfil = _importar_perfil_universo_xlsx(
+                arquivo_universo.getvalue(), arquivo_universo.name
+            )
+            st.session_state["ponderacao_perfil_universo"] = novo_perfil
+            st.session_state["ponderacao_reaplicar_perfil"] = True
+            perfil = novo_perfil
+            total_alvos_perfil = _contar_alvos_perfil(perfil)
+
+            variaveis_importadas = set(novo_perfil.get("variaveis", {}))
+            selecionadas = set(variaveis)
+            aplicaveis = selecionadas & variaveis_importadas
+            selecionadas_sem_universo = selecionadas - variaveis_importadas
+            extras_no_arquivo = variaveis_importadas - selecionadas
+
+            st.success(
+                f"Universo importado: {len(perfil['variaveis'])} variável(is) e "
+                f"{total_alvos_perfil} categoria(s). "
+                f"{len(aplicaveis)}/{len(selecionadas)} variável(is) selecionada(s) têm valores no arquivo."
+            )
+            if selecionadas_sem_universo:
+                st.warning(
+                    "Variáveis selecionadas sem valores no arquivo importado: "
+                    + ", ".join(sorted(selecionadas_sem_universo))
+                    + "."
+                )
+            if extras_no_arquivo:
+                st.info(
+                    "O arquivo também contém Universo para variável(is) não selecionada(s) nesta execução: "
+                    + ", ".join(sorted(extras_no_arquivo))
+                    + ". Esses valores ficam guardados na sessão e só serão usados se as variáveis forem selecionadas."
+                )
+        except ValueError as exc:
+            st.error(str(exc))
+
+    if col_esquecer.button(
+        "Esquecer Universo",
+        key="ponderacao_esquecer_universo",
+        use_container_width=True,
+        disabled=not bool(total_alvos_perfil),
+        help="Remove apenas o Universo reutilizável salvo na sessão. Não altera arquivos no computador.",
+    ):
+        st.session_state["ponderacao_perfil_universo"] = _perfil_vazio()
+        st.session_state["ponderacao_reaplicar_perfil"] = False
+        perfil = st.session_state["ponderacao_perfil_universo"]
+        total_alvos_perfil = 0
+        st.success("Universo reutilizável removido da sessão.")
+
+    if total_alvos_perfil:
+        st.info(
+            f"Universo disponível na sessão: {len(perfil.get('variaveis', {}))} variável(is), "
+            f"{total_alvos_perfil} categoria(s). Origem: {perfil.get('origem', 'Sessão atual')}."
         )
 
     perfil = _perfil_sessao()
@@ -2204,37 +2341,38 @@ def modulo_ponderacao():
         ):
             st.session_state["ponderacao_reaplicar_perfil"] = True
 
-    metodo_ui = st.radio(
-        "Método",
-        [
-            "Método atual — razão simples e multiplicação",
-            "Ajuste iterativo — tentar aproximar todas as margens",
-        ],
-        horizontal=False,
-        key="ponderacao_metodo",
+    st.subheader("3. Componentes de peso")
+    st.caption(
+        "Por padrão, cada variável recebe peso1, peso2, peso3... sem limite fixo. "
+        "Variáveis no mesmo componente são combinadas caso a caso: se apenas uma estiver "
+        "preenchida, o fator dela é usado; se várias estiverem preenchidas, os fatores são "
+        "multiplicados. Isso permite reunir no mesmo peso variáveis alternativas por região, "
+        "como VN_sud, VN_nord, VN_sul, VN_norte e VN_centro."
     )
-    tolerancia = st.number_input(
-        "Diferença máxima aceitável (pontos percentuais)",
-        min_value=0.0,
-        max_value=20.0,
-        value=2.0,
-        step=0.1,
-        key="ponderacao_tolerancia",
-    )
-    max_iter = 100
-    if metodo_ui.startswith("Ajuste iterativo"):
-        max_iter = int(
-            st.number_input(
-                "Máximo de iterações",
-                min_value=1,
-                max_value=1000,
-                value=100,
-                step=10,
-                key="ponderacao_max_iter",
-            )
-        )
+    try:
+        componentes_por_variavel = _configurar_componentes_peso(list(variaveis), meta)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
 
-    st.subheader("Amostra e universo")
+    grupos_componentes = OrderedDict()
+    for variavel in variaveis:
+        numero = componentes_por_variavel[variavel]
+        grupos_componentes.setdefault(numero, []).append(variavel)
+    resumo_componentes = " | ".join(
+        f"peso{numero}: " + ", ".join(vars_grupo)
+        for numero, vars_grupo in sorted(grupos_componentes.items())
+    )
+    st.caption(f"Configuração atual: {resumo_componentes}")
+
+    # Regra fixa do Instituto: razão simples + multiplicação, com validação em 2 p.p.
+    # Esses parâmetros continuam registrados nos arquivos de auditoria, mas não
+    # ficam editáveis na interface para evitar configurações metodológicas indevidas.
+    metodo_ui = METODO_PONDERACAO_FIXO
+    tolerancia = TOLERANCIA_PONDERACAO_FIXA_PP
+    max_iter = MAX_ITERACOES_COMPATIBILIDADE
+
+    st.subheader("4. Amostra e universo")
     st.caption(
         "A frequência e o % da amostra são calculados da própria base. "
         "Preencha somente a coluna % Universo. Totais como 99,99 ou 100,01 são normalizados para 100 no cálculo."
@@ -2274,7 +2412,7 @@ def modulo_ponderacao():
             )
 
         titulo_variavel = _nome_exibicao_variavel(meta, variavel)
-        with st.expander(_descricao_variavel(meta, variavel), expanded=True):
+        with st.expander(_descricao_variavel(meta, variavel), expanded=False):
             codigos_ordem = ", ".join(
                 str(codigo) for codigo in st.session_state[estado_key]["Código"].tolist()
             )
@@ -2399,6 +2537,7 @@ def modulo_ponderacao():
         tolerancia=float(tolerancia),
         max_iter=max_iter,
         identificacao=identificacao_final,
+        componentes_por_variavel=componentes_por_variavel,
     )
     cache_key = "ponderacao_resultado_calculado"
     cache_resultado = st.session_state.get(cache_key)
@@ -2435,21 +2574,13 @@ def modulo_ponderacao():
                 for variavel in variaveis
             )
 
-            if metodo_ui.startswith("Método atual"):
-                resultado = calcular_razao_simples(
-                    dados,
-                    alvos,
-                    labels=labels_por_variavel,
-                    tolerancia_pp=float(tolerancia),
-                )
-            else:
-                resultado = calcular_raking(
-                    dados,
-                    alvos,
-                    labels=labels_por_variavel,
-                    tolerancia_pp=float(tolerancia),
-                    max_iteracoes=max_iter,
-                )
+            resultado = calcular_razao_simples(
+                dados,
+                alvos,
+                labels=labels_por_variavel,
+                tolerancia_pp=float(tolerancia),
+                componentes_por_variavel=componentes_por_variavel,
+            )
         except Exception as exc:
             # Não mantém um resultado antigo visível para uma configuração que falhou.
             if isinstance(cache_resultado, dict) and cache_resultado.get("assinatura") == assinatura_atual:
@@ -2478,12 +2609,70 @@ def modulo_ponderacao():
         )
 
     resumo = resumo_pesos(resultado.pesos)
+    cobertura_componentes = diagnosticar_componentes(
+        dados,
+        resultado.fatores,
+        componentes_por_variavel=componentes_por_variavel,
+    )
+
+    def _metrica_numero(valor, casas: int = 3, sufixo: str = "") -> str:
+        try:
+            numero = float(valor)
+        except (TypeError, ValueError):
+            return "—"
+        if not np.isfinite(numero):
+            return "—"
+        return f"{numero:.{casas}f}{sufixo}"
+
     st.subheader("Validação")
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Maior diferença", f"{resultado.maior_diferenca_pp:.2f} p.p.")
+    c1.metric(
+        "Maior diferença",
+        _metrica_numero(resultado.maior_diferenca_pp, 2, " p.p."),
+    )
     c2.metric("Tolerância", f"{tolerancia:.2f} p.p.")
-    c3.metric("Peso mínimo", f"{resumo['minimo']:.3f}")
-    c4.metric("Peso máximo", f"{resumo['maximo']:.3f}")
+    c3.metric("Peso mínimo", _metrica_numero(resumo["minimo"], 3))
+    c4.metric("Peso máximo", _metrica_numero(resumo["maximo"], 3))
+
+    casos_validos = int(resumo.get("casos_com_peso", 0) or 0)
+    casos_invalidos = max(0, int(len(dados)) - casos_validos)
+    st.caption(
+        f"Casos com peso válido: {casos_validos:,} de {len(dados):,}.".replace(",", ".")
+    )
+
+    if casos_validos == 0:
+        st.error(
+            "Nenhum caso recebeu peso válido. Verifique a cobertura dos componentes abaixo. "
+            "Variáveis alternativas — por exemplo, uma variável de voto para cada região — "
+            "precisam compartilhar o mesmo peso."
+        )
+        st.dataframe(
+            cobertura_componentes[
+                [
+                    "componente",
+                    "variaveis",
+                    "casos_validos",
+                    "casos_sem_valor_aplicavel",
+                    "casos_com_valor_nao_mapeado",
+                    "casos_com_multiplas_contribuicoes",
+                ]
+            ],
+            use_container_width=True,
+            hide_index=True,
+        )
+        return
+
+    if casos_invalidos > 0:
+        st.warning(
+            f"{casos_invalidos:,} caso(s) ficaram sem peso porque não possuem valor aplicável "
+            "em pelo menos um componente ou contêm categoria sem meta configurada.".replace(",", ".")
+        )
+        with st.expander("Ver cobertura dos componentes"):
+            st.dataframe(
+                cobertura_componentes,
+                use_container_width=True,
+                hide_index=True,
+            )
 
     if resultado.convergiu:
         st.success(
@@ -2492,11 +2681,8 @@ def modulo_ponderacao():
     else:
         st.warning(
             f"Ainda existem categorias acima de {tolerancia:.2f} p.p. de diferença. "
-            "Revise a tabela abaixo e, se estiver no método atual, teste o ajuste iterativo."
+            "Revise as metas do Universo, as categorias e a configuração dos componentes de peso."
         )
-
-    if resultado.metodo == "Raking iterativo":
-        st.caption(f"Iterações executadas: {resultado.iteracoes}.")
 
     diagnostico_exibicao = resultado.diagnostico.copy()
     for coluna in [
@@ -2616,7 +2802,7 @@ def modulo_ponderacao():
         )
 
     codigos_protegidos_assistente = OrderedDict()
-    with st.expander("Travas e proteções de exclusão", expanded=True):
+    with st.expander("Travas e proteções de exclusão", expanded=False):
         st.caption(
             "Uma entrevista é bloqueada para exclusão se pertencer a qualquer categoria protegida. "
             "Ex.: com mínimo 30, uma categoria com base 34 pode perder no máximo 4 casos; ao chegar a 30, "
@@ -2761,6 +2947,7 @@ def modulo_ponderacao():
                             metodo_ui,
                             float(tolerancia),
                             max_iter,
+                            componentes_por_variavel=componentes_por_variavel,
                         )
                     resultado_no_limite = resultado_pos
                 else:
@@ -2773,6 +2960,7 @@ def modulo_ponderacao():
                         metodo_ui=metodo_ui,
                         tolerancia=float(tolerancia),
                         max_iter=max_iter,
+                        componentes_por_variavel=componentes_por_variavel,
                     )
 
                     if melhor_k == len(sugestao_limite.ids_excluir):
@@ -2825,6 +3013,7 @@ def modulo_ponderacao():
                                 metodo_ui,
                                 float(tolerancia),
                                 max_iter,
+                                componentes_por_variavel=componentes_por_variavel,
                             )
                         except Exception:
                             resultado_no_limite = resultado
@@ -3049,7 +3238,10 @@ def modulo_ponderacao():
         erro_excel_historico = cache_resultado.get("erro_excel_historico")
         nome_registro = cache_resultado["nome_registro"]
     else:
-        syntax = gerar_syntax_spss(resultado.fatores)
+        syntax = gerar_syntax_spss(
+            resultado.fatores,
+            componentes_por_variavel=componentes_por_variavel,
+        )
         excel_tecnico = _gerar_relatorio_excel(resultado, float(tolerancia), len(dados))
 
         erro_excel_calculo = None
@@ -3061,6 +3253,7 @@ def modulo_ponderacao():
                 variaveis=list(variaveis),
                 arquivo_origem=getattr(uploaded, "name", "Base SPSS"),
                 identificacao=identificacao_final,
+                componentes_por_variavel=componentes_por_variavel,
             )
         except Exception as exc:
             excel_calculo = None
@@ -3077,6 +3270,7 @@ def modulo_ponderacao():
                 labels_por_variavel=labels_por_variavel,
                 arquivo_origem=getattr(uploaded, "name", "Base SPSS"),
                 identificacao=identificacao_final,
+                componentes_por_variavel=componentes_por_variavel,
             )
         except Exception as exc:
             excel_historico = None
@@ -3093,6 +3287,7 @@ def modulo_ponderacao():
             "erro_excel_calculo": erro_excel_calculo,
             "erro_excel_historico": erro_excel_historico,
             "nome_registro": nome_registro,
+            "componentes_por_variavel": dict(componentes_por_variavel),
         }
         cache_resultado = st.session_state[cache_key]
 
@@ -3166,7 +3361,7 @@ def modulo_ponderacao():
             key="ponderacao_download_calculo",
             help=(
                 "Memória de cálculo inspirada na planilha usada pela equipe: mostra amostra, "
-                "universo, razão, fatores, componentes peso1/peso2 e as linhas da syntax SPSS."
+                "universo, razão, fatores, componentes peso1/peso2/... e as linhas da syntax SPSS."
             ),
             use_container_width=True,
         )

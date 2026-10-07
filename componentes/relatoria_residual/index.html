@@ -1,0 +1,1266 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="versao-tela" content="4" />
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Análise Residual</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700;800;900&display=swap"/>
+  <!-- Ponte Streamlit no lugar do QWebChannel do Qt (ver componentes/ponte_qt.js) -->
+  <script src="ponte_qt.js"></script>
+  <style>
+    /* [Streamlit] integrada à página: SEM altura fixa e SEM rolagem interna —
+       quem rola é a página; a prévia acompanha a rolagem (ver "prévia visível"). */
+    html,body{margin:0;font-family:"Source Sans Pro","Source Sans 3",system-ui,Arial,sans-serif;background:#fff;}
+    .app{display:grid;grid-template-columns:min(480px,38%) 1fr;align-items:start}
+    /* [Streamlit] painel recolhível: a prévia ganha a largura toda */
+    .app.recolhido{grid-template-columns:46px 1fr}
+    .app.recolhido .panel > *:not(#railBtn){display:none}
+    .app.recolhido .panel{padding:4px 4px 10px;background:transparent;border-right:none}
+    #railBtn{display:none;will-change:transform;width:36px;padding:10px 0;border-radius:10px;border:1px solid #cbd5e1;background:#fff;
+             font-weight:800;font-size:12px;color:#1e3a8a;writing-mode:vertical-rl;transform:rotate(180deg);cursor:pointer}
+    #railBtn:hover{background:#eff6ff}
+    .app.recolhido #railBtn{display:block}
+    #btnTogglePanel{white-space:nowrap}
+    #avisoRecolhido{font-size:12px;color:#1e3a8a;background:#eff6ff;border:1px solid #dbeafe;border-radius:10px;
+                    padding:6px 10px;margin:0 0 10px}
+    #avisoRecolhido:empty{display:none}
+    .panel{border-right:1px solid #eee;padding:4px 16px 16px 2px;background:#fff}
+    h1{font-size:18px;margin:0 0 12px}
+    h2{font-size:14px;margin:16px 0 8px}
+    label{font-size:13px;display:block;margin:8px 0 6px}
+    small{color:#666;font-size:12px}
+    button,input,select{font:inherit;padding:8px 10px;border-radius:10px;border:1px solid #ddd;background:#fff}
+    button{cursor:pointer}
+    .btn-primary{background:#1E90FF;border-color:#1E90FF;color:#fff}
+    .btn-outline{background:#fff;color:#111;border-color:#ccc}
+    .btn-sm{padding:6px 8px;border-radius:10px;font-size:12px}
+    .inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .muted{color:#666;font-size:12px}
+    .box{border:1px solid #eee;border-radius:14px;padding:10px 10px 8px;background:#fafafa;margin-bottom:10px;}
+
+    .listbox{border:1px solid #e6e6e6;border-radius:12px;background:#fff;padding:6px;max-height:230px;overflow:auto;}
+    .row{display:flex;align-items:center;gap:8px;padding:4px 4px}
+    .row input{margin:0}
+    .row .lab{font-size:12px;white-space:normal;overflow-wrap:anywhere;line-height:1.35;flex:1;min-width:0;}
+    .row.is-checked{background:#ecfdf3;border-radius:8px;box-shadow:inset 3px 0 0 #16a34a}
+
+    .search{width:100%;box-sizing:border-box}
+
+    .weightList{border:1px solid #e6e6e6;border-radius:12px;background:#fff;padding:6px;max-height:180px;overflow:auto;}
+    .weightItem{display:flex;align-items:center;gap:8px;width:100%;padding:8px 10px;border:none;border-radius:10px;background:#fff;color:#111;text-align:left;cursor:pointer;box-sizing:border-box}
+    .weightItem:hover{background:#f5f5f5}
+    .weightItem.active{background:#eaf3ff;color:#0b57d0;font-weight:800}
+    .weightDot{width:10px;height:10px;border-radius:999px;border:1px solid #bdbdbd;flex:0 0 10px;background:#fff}
+    .weightItem.active .weightDot{background:#0b57d0;border-color:#0b57d0}
+    .weightText{font-size:12px;white-space:normal;overflow-wrap:anywhere;flex:1;min-width:0}
+
+    .renameList{border:1px solid #e6e6e6;border-radius:12px;background:#fff;padding:8px;max-height:210px;overflow:auto;}
+    .renameItem{display:grid;grid-template-columns:1fr;gap:4px;padding:8px 2px;border-bottom:1px solid #f2f2f2}
+    .renameItem:last-child{border-bottom:none}
+    .renameKey{font-size:11.5px;color:#64748b;font-weight:700;overflow-wrap:anywhere}
+    .renameInp{width:100%;box-sizing:border-box;font-size:12.5px;font-family:inherit;line-height:1.35;resize:vertical;
+               min-height:34px;overflow-wrap:anywhere}
+
+    /* [Streamlit] Todos (verde, com contador) / Nenhum (vermelho) */
+    .btn-green{background:#16a34a !important;border-color:#16a34a !important;color:#fff !important;font-weight:700}
+    .btn-green:hover{background:#15803d !important}
+    .btn-red{background:#dc2626 !important;border-color:#dc2626 !important;color:#fff !important;font-weight:700}
+    .btn-red:hover{background:#b91c1c !important}
+    .cnt-btn{display:inline-block;min-width:16px;margin-left:6px;padding:0 6px;border-radius:999px;background:#fff;
+             color:#15803d;font-weight:900;font-size:11px;text-align:center}
+    .selMsg{font-size:12px;margin-top:6px}
+    .selMsg:empty{display:none}
+    .selMsg.ok{color:#15803d}
+    .selMsg.warn{color:#b45309}
+    .hint-ok{color:#15803d !important;font-weight:700}
+    .chkline{display:flex;gap:8px;align-items:flex-start;font-size:12.5px;color:#333;margin-top:10px}
+    .chkline input{margin-top:2px}
+
+    .queue{border:1px solid #e6e6e6;border-radius:12px;background:#fff;padding:8px;max-height:190px;overflow:auto;}
+    .qitem{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 4px;border-bottom:1px solid #f2f2f2}
+    .qitem:last-child{border-bottom:none}
+    .qtitle{font-size:12px;font-weight:700;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1}
+    .qbtn{padding:4px 8px;border-radius:10px;font-size:12px;border:1px solid #ccc;background:#fff;cursor:pointer}
+
+    #main{background:#fff;display:flex;flex-direction:column;min-width:0;will-change:transform}
+    #headerbar{padding:4px 12px 10px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+    #title{font-weight:800;font-size:15px;color:#111;margin:0;}
+    #subtitle{font-size:12px;color:#666;overflow-wrap:anywhere;}
+    #wrap{overflow-x:auto;padding:12px 0 12px 12px;}
+
+    .card{margin:0 0 18px 0;border:1px solid #eee;border-radius:14px;overflow:hidden}
+    .cardHead{padding:10px 12px;background:#fafafa;border-bottom:1px solid #eee;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+    .cardTitleWrap{display:flex;gap:8px;align-items:center;flex-wrap:wrap;min-width:340px;flex:1}
+    .cardTitleLabel{font-weight:900;font-size:13px;white-space:nowrap}
+    .titleInput{flex:1;min-width:240px;padding:8px 10px;border-radius:10px;border:1px solid #ddd;font:inherit;}
+    .cardBtns{display:flex;gap:8px;flex-wrap:wrap}
+
+    .tableWrap{overflow:auto;border:1px solid #eee;border-radius:12px;margin-top:10px}
+    table{border-collapse:collapse;font-size:12px;min-width:720px;background:#fff;}
+    th,td{border:1px solid #e6e6e6;padding:6px 7px;background:#fff;text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap;}
+    th{font-weight:900;position:sticky;top:0;z-index:5;background:#f7f7f7;}
+    td.firstcol, th.firstcol{position:sticky;left:0;z-index:6;background:#f7f7f7;font-weight:900;text-align:left;}
+
+    .cell{display:flex;flex-direction:column;gap:2px;line-height:1.1}
+    .pct{font-size:11px;opacity:.85}
+    .z{font-size:12px;font-weight:800}
+    .badge{font-size:12px;padding:4px 8px;border-radius:999px;border:1px solid #e6e6e6;background:#fff;white-space:nowrap;}
+
+    .modal-backdrop{
+      position:fixed; inset:0; background:rgba(0,0,0,.25);
+      display:none; align-items:flex-start; justify-content:center; z-index:9999;
+    }
+    .modal-backdrop.open{display:flex}
+    .modal{
+      width:min(720px, calc(100vw - 32px));
+      max-height:min(80vh, 760px);
+      background:#fff; border-radius:16px; border:1px solid #e6e6e6;
+      box-shadow:0 16px 40px rgba(0,0,0,.18);
+      display:flex; flex-direction:column; gap:10px; padding:14px;
+    }
+    .modal h3{margin:0;font-size:14px}
+    .modal .rows{border:1px solid #eee;border-radius:12px;overflow:auto;flex:1;min-height:120px;}
+    .modal .r{
+      display:grid; grid-template-columns:1fr 1fr auto; gap:10px;
+      align-items:center; padding:10px 10px; border-bottom:1px solid #f0f0f0; background:#fff;
+    }
+    .modal .r:last-child{border-bottom:none}
+    .modal .orig{font-weight:800;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .modal .edit{width:100%;box-sizing:border-box}
+    .modal .actions{display:flex;gap:6px;flex-wrap:nowrap}
+    .modal .actions button{padding:6px 8px;border-radius:10px}
+    .modal .footer{display:flex;justify-content:flex-end;gap:8px}
+  </style>
+</head>
+<body>
+<div class="app">
+  <aside class="panel">
+    <button id="railBtn" type="button" title="Mostrar o painel de configurações">⟩ Painel</button>
+    <!-- título já aparece no cabeçalho da página do Streamlit -->
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">0) Dados</h2>
+      <label>Importar banco</label>
+      <div class="inline">
+        <button id="btnPick" class="btn-outline" type="button">Importar CSV/XLSX/SAV</button>
+        <small id="dataStatus" class="muted"></small>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">1) Modo</h2>
+      <select id="mode" style="width:100%">
+        <option value="batch">1) Gerar automaticamente (1 tabela por variável LINHA)</option>
+        <option value="queue">2) Gerar 1 por vez + Adicionar à fila</option>
+      </select>
+      <div class="muted" style="margin-top:8px" id="modeHint"></div>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">2) Peso / Percentual</h2>
+
+      <label>Variável de peso (obrigatório)</label>
+      <div id="weightList" class="weightList"></div>
+      <small class="muted" id="weightHint">Mostra primeiro colunas que contêm “peso”.</small>
+
+      <label style="margin-top:10px">Percentual exibido</label>
+      <select id="pctMode" style="width:220px">
+        <option value="col" selected>Coluna (%)</option>
+        <option value="row">Linha (%)</option>
+        <option value="total">Total (%)</option>
+      </select>
+
+      <label style="margin-top:10px">Casas decimais (Z)</label>
+      <input id="decimals" type="number" min="0" max="10" step="1" value="1" style="width:120px"/>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">3) Selecionar variáveis</h2>
+
+      <div style="margin-bottom:12px">
+        <label>Variáveis LINHA</label>
+        <input id="searchRow" class="search" type="text" placeholder="Buscar..."/>
+        <div id="rowsList" class="listbox" style="margin-top:8px"></div>
+
+        <div class="inline" style="margin-top:10px">
+          <button id="btnAllRows" class="btn-green btn-sm" type="button">Todos Linhas<span id="cntRows" class="cnt-btn">0</span></button>
+          <button id="btnNoneRows" class="btn-red btn-sm" type="button">Nenhum Linhas</button>
+        </div>
+        <div id="rowsMsg" class="selMsg"></div>
+      </div>
+
+      <div>
+        <label>Variáveis COLUNA</label>
+        <input id="searchCol" class="search" type="text" placeholder="Buscar..."/>
+        <div id="colsList" class="listbox" style="margin-top:8px"></div>
+
+        <div class="inline" style="margin-top:10px">
+          <button id="btnAllCols" class="btn-green btn-sm" type="button">Todos Colunas<span id="cntCols" class="cnt-btn">0</span></button>
+          <button id="btnNoneCols" class="btn-red btn-sm" type="button">Nenhum Colunas</button>
+        </div>
+        <div id="colsMsg" class="selMsg"></div>
+      </div>
+
+      <div class="inline" style="margin-top:12px;justify-content:space-between">
+        <span class="badge" id="selBadge">0 linhas · 0 colunas</span>
+        <small id="status" class="muted"></small>
+      </div>
+
+      <div class="inline" style="margin-top:10px">
+        <button id="btnPreview" class="btn-primary" type="button">Gerar prévia</button>
+        <button id="btnAddQueue" class="btn-outline" type="button">Adicionar à fila</button>
+      </div>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">4) Renomear variáveis</h2>
+      <small class="muted">Isso muda apenas o nome exibido/Exportação (não altera o banco).</small>
+      <div id="renameList" class="renameList"></div>
+    </div>
+
+    <div class="box">
+      <h2 style="margin:0 0 8px">5) Fila / Exportação</h2>
+      <div class="inline" style="margin-top:6px">
+        <button id="btnClearQueue" class="btn-outline" type="button" style="display:none">Limpar fila</button>
+        <button id="btnExportXlsx" class="btn-primary" type="button">Exportar XLSX</button>
+        <small id="expStatus" class="muted"></small>
+      </div>
+      <label class="chkline"><input id="chkDebug" type="checkbox"/>
+        <span>Baixar também os arquivos de conferência (<b>_DEBUG</b> e <b>_CASES_DEBUG</b>)</span></label>
+      <div id="queue" class="queue" style="margin-top:10px;display:none"></div>
+      <small class="muted" style="display:block;margin-top:8px">No modo 1 (automático), gere a prévia e exporte.
+        No modo 2, a <b>fila</b> (com <b>Exportar XLSX</b> e <b>Limpar fila</b>) fica na barra lateral, à esquerda.</small>
+    </div>
+  </aside>
+
+  <main id="main">
+    <div id="headerbar">
+      <div style="min-width:0">
+        <div id="title">Prévia</div>
+        <div id="subtitle">Selecione variáveis e gere a prévia.</div>
+      </div>
+      <div class="inline" style="flex-wrap:nowrap">
+        <button id="btnTogglePanel" class="btn-outline btn-sm" type="button" title="Recolher o painel e usar a largura toda para a tabela">⟨ Ampliar prévia</button>
+        <span class="badge" id="meta">—</span>
+      </div>
+    </div>
+    <div id="wrap">
+      <div class="muted">Nada para mostrar ainda.</div>
+    </div>
+  </main>
+</div>
+
+<div class="modal-backdrop" id="modalBackdrop">
+  <div class="modal">
+    <h3 id="modalTitle">Ordenar linhas</h3>
+    <div class="rows" id="modalRows"></div>
+    <div class="footer">
+      <button class="btn-outline" id="btnModalCancel" type="button">Cancelar</button>
+      <button class="btn-primary" id="btnModalSave" type="button">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  window.QtBridge = null;
+  new QWebChannel(qt.webChannelTransport, function(channel){
+    window.QtBridge = channel.objects.QtBridge;
+  });
+
+  function el(id){ return document.getElementById(id); }
+
+  let __vars = [];
+  let __labels = {};
+  let __dispMap = {};
+  let __weights = [];
+  let __selectedWeight = "";
+
+  let __selRows = new Set();
+  let __selCols = new Set();
+
+  let __queue = [];
+  let __preview = null;
+
+  let __modal = {
+    open:false,
+    mode:'rows',
+    tableIndex:-1,
+    blockIndex:-1,
+    items:[]
+  };
+
+  function dispVar(v){
+    return (__dispMap && __dispMap[v]) ? __dispMap[v] : ((__labels && __labels[v]) ? __labels[v] : v);
+  }
+
+  function updateBadge(){
+    el('selBadge').textContent = `${__selRows.size} linhas · ${__selCols.size} colunas`;
+    el('cntRows').textContent = String(__selRows.size);
+    el('cntCols').textContent = String(__selCols.size);
+    salvarUi();
+  }
+
+  // [Streamlit] utilitários das melhorias
+  function msg(id, txt, tipo){ const m = el(id); if(!m) return; m.className = 'selMsg ' + (tipo||''); m.textContent = txt || ''; }
+  // o peso nunca entra como variável de LINHA/COLUNA
+  function varsAnalise(){
+    const pesos = new Set(__weights || []);
+    if(__selectedWeight) pesos.add(__selectedWeight);
+    return __vars.filter(v => !pesos.has(v));
+  }
+  function visiveis(searchId){
+    const q = (el(searchId).value || '').toLowerCase().trim();
+    return varsAnalise().filter(v => !q || String(dispVar(v)).toLowerCase().includes(q) || String(v).toLowerCase().includes(q));
+  }
+  function tirarPesoDasSelecoes(){
+    const pesos = new Set(__weights || []);
+    if(__selectedWeight) pesos.add(__selectedWeight);
+    pesos.forEach(v => { __selRows.delete(v); __selCols.delete(v); });
+  }
+  let __queueSigs = {};
+  function sigTabela(t){
+    const cols = (t.blocks || []).map(b => String(b.col_var || '')).join(',');
+    return `${t.row_var || ''}|${cols}|${t.weight_var || ''}`;
+  }
+
+  // ---------------- [Streamlit] estado da tela guardado no Python
+  let __restaurando = false;
+  let __timerUi = null;
+  function salvarUi(){
+    if(__restaurando || !__vars.length) return;
+    clearTimeout(__timerUi);
+    __timerUi = setTimeout(()=>{
+      const estado = {
+        mode: mode(), selRows: Array.from(__selRows), selCols: Array.from(__selCols), dispMap: __dispMap,
+        weight: __selectedWeight, pctMode: el('pctMode').value, decimals: el('decimals').value,
+        debug: !!el('chkDebug').checked, preview: (__preview && __preview.ok) ? __preview : null,
+        recolhido: document.querySelector('.app').classList.contains('recolhido'),
+      };
+      window.QtBridge?.saveUiState?.(JSON.stringify(estado));
+    }, 900);
+  }
+  window.__restoreUiState = function(json){
+    let e = {};
+    try{ e = JSON.parse(json || '{}'); }catch(_){ return; }
+    __restaurando = true;
+    try{
+      if(e.mode){ el('mode').value = e.mode; }
+      if(e.weight && __vars.includes(e.weight)) __selectedWeight = e.weight;
+      __selRows = new Set((e.selRows || []).filter(v => __vars.includes(v)));
+      __selCols = new Set((e.selCols || []).filter(v => __vars.includes(v)));
+      Object.entries(e.dispMap || {}).forEach(([k, v])=>{ if(v) __dispMap[k] = v; });
+      if(e.pctMode) el('pctMode').value = e.pctMode;
+      if(e.decimals !== undefined && e.decimals !== '') el('decimals').value = e.decimals;
+      el('chkDebug').checked = !!e.debug;
+      atualizarHintPeso();
+      renderWeightPicker();
+      updateModeUI();
+      renderAll();
+      renderQueue();
+      if(e.preview && e.preview.ok){
+        __preview = e.preview;
+        el('meta').textContent = `${(__preview.tables || []).length} tabela(s)`;
+        el('status').textContent = 'Pronto.';
+        renderPreview(__preview);
+      }
+      if(e.recolhido && typeof definirPainel === 'function') definirPainel(true);
+    } finally {
+      __restaurando = false;
+    }
+  };
+
+  function atualizarHintPeso(){
+    const h = el('weightHint');
+    if(__selectedWeight && (__weights || []).length === 1 && __selectedWeight === __weights[0]){
+      h.textContent = `✓ Peso selecionado automaticamente: ${dispVar(__selectedWeight)} (única coluna com “peso”).`;
+      h.classList.add('hint-ok');
+    } else {
+      h.classList.remove('hint-ok');
+      h.textContent = (__weights || []).length ? 'Mostra primeiro colunas que contêm “peso”.'
+                                               : 'Não achei colunas com “peso”. Mostrando todas para você escolher.';
+    }
+  }
+
+  function mode(){
+    return el('mode').value || 'batch';
+  }
+
+  function updateModeUI(){
+    const m = mode();
+    if(m === 'batch'){
+      el('modeHint').textContent = 'Selecione VÁRIAS LINHAS e VÁRIAS COLUNAS. O app gera 1 tabela por LINHA, com todas as COLUNAS juntas.';
+      el('btnAddQueue').style.display = 'none';
+    } else {
+      el('modeHint').textContent = 'Selecione 1 LINHA e várias COLUNAS. Gere a prévia e clique em “Adicionar à fila”.';
+      el('btnAddQueue').style.display = 'inline-block';
+    }
+  }
+
+  function renderWeightPicker(){
+    const box = el('weightList');
+    box.innerHTML = '';
+
+    const list = (__weights && __weights.length) ? __weights.slice() : __vars.slice();
+
+    if(!list.length){
+      box.innerHTML = '<small class="muted">Nenhuma variável disponível.</small>';
+      return;
+    }
+
+    list.forEach(v=>{
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'weightItem' + ((__selectedWeight === v) ? ' active' : '');
+
+      const dot = document.createElement('span');
+      dot.className = 'weightDot';
+
+      const txt = document.createElement('span');
+      txt.className = 'weightText';
+      txt.textContent = dispVar(v);
+      txt.title = v;
+
+      btn.appendChild(dot);
+      btn.appendChild(txt);
+
+      btn.addEventListener('click', ()=>{
+        __selectedWeight = v;
+        renderWeightPicker();
+        atualizarHintPeso();
+        renderAll();
+      });
+
+      box.appendChild(btn);
+    });
+  }
+
+  function renderVarList(containerId, allVars, selectedSet, searchId, enforceSingle){
+    const box = el(containerId);
+    box.innerHTML = '';
+    const q = (el(searchId).value || '').toLowerCase().trim();
+
+    const show = allVars.filter(v=>{
+      const dn = String(dispVar(v)).toLowerCase();
+      const vn = String(v).toLowerCase();
+      return !q || dn.includes(q) || vn.includes(q);
+    });
+
+    for(const v of show){
+      const row = document.createElement('div');
+      row.className = 'row' + (selectedSet.has(v) ? ' is-checked' : '');
+
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = selectedSet.has(v);
+      cb.addEventListener('change', ()=>{ row.classList.toggle('is-checked', cb.checked); msg('rowsMsg', ''); msg('colsMsg', ''); });
+
+      cb.addEventListener('change', ()=>{
+        if(cb.checked){
+          if(enforceSingle){
+            selectedSet.clear();
+            selectedSet.add(v);
+            renderAll();
+          } else {
+            selectedSet.add(v);
+            updateBadge();
+            refreshRenameList();
+          }
+        } else {
+          selectedSet.delete(v);
+          updateBadge();
+          refreshRenameList();
+        }
+      });
+
+      const lab = document.createElement('div');
+      lab.className = 'lab';
+      lab.textContent = dispVar(v);
+      lab.title = v;
+
+      row.appendChild(cb);
+      row.appendChild(lab);
+      box.appendChild(row);
+    }
+  }
+
+  function renderSelectionLists(){
+    const enforceSingleRow = (mode() === 'queue');
+    tirarPesoDasSelecoes();
+    renderVarList('rowsList', varsAnalise(), __selRows, 'searchRow', enforceSingleRow);
+    renderVarList('colsList', varsAnalise(), __selCols, 'searchCol', false);
+    updateBadge();
+  }
+
+  function refreshRenameList(){
+    const box = el('renameList');
+
+    const focused = document.activeElement;
+    const focusedVar = (focused && focused.classList && focused.classList.contains('renameInp'))
+      ? focused.getAttribute('data-var')
+      : null;
+    const selStart = (focused && typeof focused.selectionStart === 'number') ? focused.selectionStart : null;
+    const selEnd = (focused && typeof focused.selectionEnd === 'number') ? focused.selectionEnd : null;
+
+    box.innerHTML = '';
+
+    const selected = Array.from(new Set([...Array.from(__selRows.values()), ...Array.from(__selCols.values())]));
+    if(!selected.length){
+      box.innerHTML = '<small class="muted">Selecione variáveis para renomear.</small>';
+      return;
+    }
+
+    for(const v of selected){
+      const row = document.createElement('div');
+      row.className = 'renameItem';
+
+      const key = document.createElement('div');
+      key.className = 'renameKey';
+      key.textContent = v;
+      key.title = v;
+
+      const inp = document.createElement('textarea');
+      inp.className = 'renameInp';
+      inp.rows = 1;
+      inp.value = dispVar(v);
+      inp.placeholder = v;
+      inp.setAttribute('data-var', v);
+      const ajustar = ()=>{ inp.style.height = 'auto'; inp.style.height = (inp.scrollHeight + 2) + 'px'; };
+      inp.addEventListener('keydown', (e)=>{ if(e.key === 'Enter'){ e.preventDefault(); inp.blur(); } });
+
+      inp.addEventListener('input', ()=>{
+        const nv = (inp.value || '').replace(/\s*\n\s*/g, ' ').trim();
+        __dispMap[v] = nv ? nv : ((__labels[v] || '').trim() ? __labels[v] : v);
+        ajustar();
+        salvarUi();
+      });
+      requestAnimationFrame(ajustar);
+
+      row.appendChild(key);
+      row.appendChild(inp);
+      box.appendChild(row);
+    }
+
+    if(focusedVar){
+      const newInp = box.querySelector(`.renameInp[data-var="${focusedVar}"]`);
+      if(newInp){
+        newInp.focus();
+        try{
+          if(selStart !== null && selEnd !== null){
+            newInp.setSelectionRange(selStart, selEnd);
+          }
+        }catch(_){}
+      }
+    }
+  }
+
+  function renderAll(){
+    renderSelectionLists();
+    refreshRenameList();
+  }
+
+  function renderQueue(){
+    const box = el('queue');
+    box.innerHTML = '';
+
+    if(mode() !== 'queue'){
+      box.innerHTML = '<small class="muted">Fila só funciona no modo 2.</small>';
+      return;
+    }
+
+    if(!__queue.length){
+      box.innerHTML = '<small class="muted">Fila vazia.</small>';
+      return;
+    }
+
+    __queue.forEach((it, idx)=>{
+      const row = document.createElement('div');
+      row.className = 'qitem';
+
+      const t = document.createElement('div');
+      t.className = 'qtitle';
+      t.textContent = it.title || `Tabela ${idx+1}`;
+
+      const btn = document.createElement('button');
+      btn.className = 'qbtn';
+      btn.textContent = 'Remover';
+      btn.addEventListener('click', ()=> window.QtBridge?.removeQueueItem?.(idx));
+
+      row.appendChild(t);
+      row.appendChild(btn);
+      box.appendChild(row);
+    });
+  }
+
+  function fmtZ(v, d){
+    if(v === null || v === undefined || !isFinite(v)) return '—';
+    const dd = Math.max(0, Math.min(10, Number(d) || 1));
+    return Number(v).toFixed(dd);
+  }
+
+  function fmtPct(v){
+    if(v === null || v === undefined || !isFinite(v)) return '—';
+    return Number(v).toFixed(1) + '%';
+  }
+
+  function styleForZ(z){
+    if(z === null || z === undefined || !isFinite(z)) return null;
+    if(z <= -1.85) return {bg:'rgb(251,226,213)', fg:'rgb(126,53,14)'};
+    if(z >= 1.85) return {bg:'rgb(218,233,248)', fg:'rgb(21,61,100)'};
+    return null;
+  }
+
+  function reorderBlockColsByLabels(block, sourceItems, targetItems){
+    if(!block || !Array.isArray(block.col_cats)) return block;
+
+    const oldColCats = (block.col_cats || []).slice();
+    const oldPercent = (block.percent || []).map(r => (r || []).slice());
+    const oldZ = (block.z || []).map(r => (r || []).slice());
+    const oldObs = (block.debug_obs || []).map(r => (r || []).slice());
+    const oldExp = (block.debug_exp || []).map(r => (r || []).slice());
+    const oldColCodes = Array.isArray(block.debug_col_codes) ? block.debug_col_codes.slice() : [];
+    const oldColDisplay = Array.isArray(block.debug_col_display) ? block.debug_col_display.slice() : [];
+
+    const idxs = targetItems.map(item => Number(item.id)).filter(idx => !Number.isNaN(idx) && idx >= 0 && idx < oldColCats.length);
+    const newLabels = targetItems.map(item => (item.text || "").trim());
+
+    block.col_cats = idxs.map((idx, pos) => newLabels[pos] || oldColCats[idx]);
+    block.percent = oldPercent.map(row => idxs.map(i => row[i]));
+    block.z = oldZ.map(row => idxs.map(i => row[i]));
+    block.debug_obs = oldObs.map(row => idxs.map(i => row[i]));
+    block.debug_exp = oldExp.map(row => idxs.map(i => row[i]));
+    block.debug_col_codes = idxs.map(i => oldColCodes[i] || "");
+    block.debug_col_display = idxs.map((idx, pos) => newLabels[pos] || oldColDisplay[idx] || oldColCats[idx]);
+
+    return block;
+    }
+
+  function reorderBlockRowsByLabels(block, sourceItems, targetItems){
+    if(!block || !Array.isArray(block.row_cats)) return block;
+
+    const colCount = Array.isArray(block.col_cats) ? block.col_cats.length : 0;
+
+    const oldRowCats = (block.row_cats || []).slice();
+    const oldPercent = (block.percent || []).slice();
+    const oldZ = (block.z || []).slice();
+    const oldObs = (block.debug_obs || []).slice();
+    const oldExp = (block.debug_exp || []).slice();
+    const oldRowCodes = Array.isArray(block.debug_row_codes) ? block.debug_row_codes.slice() : [];
+    const oldRowDisplay = Array.isArray(block.debug_row_display) ? block.debug_row_display.slice() : [];
+
+    const newRowCats = [];
+    const newPercent = [];
+    const newZ = [];
+    const newObs = [];
+    const newExp = [];
+    const newRowCodes = [];
+    const newRowDisplay = [];
+
+    targetItems.forEach(item=>{
+        const idx = Number(item.id);
+
+        if(Number.isNaN(idx) || idx < 0 || idx >= oldRowCats.length){
+        newRowCats.push(item.text || "");
+        newPercent.push(Array(colCount).fill(0));
+        newZ.push(Array(colCount).fill(null));
+        newObs.push(Array(colCount).fill(0));
+        newExp.push(Array(colCount).fill(null));
+        newRowCodes.push("");
+        newRowDisplay.push(item.text || "");
+        } else {
+        const newLabel = (item.text || "").trim() || oldRowCats[idx];
+        newRowCats.push(newLabel);
+        newPercent.push(oldPercent[idx] || Array(colCount).fill(0));
+        newZ.push(oldZ[idx] || Array(colCount).fill(null));
+        newObs.push(oldObs[idx] || Array(colCount).fill(0));
+        newExp.push(oldExp[idx] || Array(colCount).fill(null));
+        newRowCodes.push(oldRowCodes[idx] || "");
+        newRowDisplay.push(newLabel);
+        }
+    });
+
+    block.row_cats = newRowCats;
+    block.percent = newPercent;
+    block.z = newZ;
+    block.debug_obs = newObs;
+    block.debug_exp = newExp;
+    block.debug_row_codes = newRowCodes;
+    block.debug_row_display = newRowDisplay;
+
+    return block;
+    }
+  function buildCombinedTable(tableObj, decimals){
+    const blocks = tableObj.blocks || [];
+    if(!blocks.length){
+      const empty = document.createElement('div');
+      empty.className = 'muted';
+      empty.textContent = 'Sem blocos para exibir.';
+      return empty;
+    }
+
+    const canonicalRows = (blocks[0].row_cats || []).slice();
+
+    const table = document.createElement('table');
+    const thead = document.createElement('thead');
+
+    const tr1 = document.createElement('tr');
+    const th0 = document.createElement('th');
+    th0.className = 'firstcol';
+    th0.rowSpan = 2;
+    th0.textContent = dispVar(tableObj.row_var || '');
+    tr1.appendChild(th0);
+
+    blocks.forEach((b, bi)=>{
+      const th = document.createElement('th');
+      th.colSpan = Math.max(1, (b.col_cats || []).length);
+
+      const headBox = document.createElement('div');
+      headBox.style.display = 'flex';
+      headBox.style.alignItems = 'center';
+      headBox.style.justifyContent = 'space-between';
+      headBox.style.gap = '8px';
+
+      const txt = document.createElement('span');
+      txt.textContent = dispVar(b.col_var || '');
+
+      const bc = document.createElement('button');
+      bc.type = 'button';
+      bc.className = 'btn-outline btn-sm';
+      bc.textContent = 'Ordenar colunas';
+      bc.addEventListener('click', (ev)=>{
+        ev.stopPropagation();
+        openColModal(tableObj.__tableIndex, bi);
+      });
+
+      headBox.appendChild(txt);
+      headBox.appendChild(bc);
+      th.appendChild(headBox);
+      tr1.appendChild(th);
+    });
+
+    const tr2 = document.createElement('tr');
+    blocks.forEach(b=>{
+      (b.col_cats || []).forEach(cc=>{
+        const th = document.createElement('th');
+        th.textContent = cc;
+        tr2.appendChild(th);
+      });
+    });
+
+    thead.appendChild(tr1);
+    thead.appendChild(tr2);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+
+    for(let i=0;i<canonicalRows.length;i++){
+      const trPct = document.createElement('tr');
+      const trZ = document.createElement('tr');
+
+      const td0 = document.createElement('td');
+      td0.className = 'firstcol';
+      td0.rowSpan = 2;
+      td0.textContent = canonicalRows[i];
+      trPct.appendChild(td0);
+
+      blocks.forEach(b=>{
+        const pct = b.percent || [];
+        const z = b.z || [];
+
+        for(let j=0;j<(b.col_cats || []).length;j++){
+          const tdPct = document.createElement('td');
+          const tdZ = document.createElement('td');
+
+          tdPct.textContent = fmtPct((pct[i] || [])[j]);
+          tdZ.textContent = fmtZ((z[i] || [])[j], decimals);
+
+          const st = styleForZ((z[i] || [])[j]);
+          if(st){
+            tdPct.style.background = st.bg;
+            tdPct.style.color = st.fg;
+            tdPct.style.fontWeight = '800';
+
+            tdZ.style.background = st.bg;
+            tdZ.style.color = st.fg;
+            tdZ.style.fontWeight = '800';
+          }
+
+          trPct.appendChild(tdPct);
+          trZ.appendChild(tdZ);
+        }
+      });
+
+      tbody.appendChild(trPct);
+      tbody.appendChild(trZ);
+    }
+
+    table.appendChild(tbody);
+
+    const wrap = document.createElement('div');
+    wrap.className = 'tableWrap';
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+    function openRowModal(tableIndex){
+        if(!__preview || !__preview.ok) return;
+        const t = (__preview.tables || [])[tableIndex];
+        if(!t) return;
+
+        const labels = ((t.blocks || [])[0]?.row_cats || []).slice();
+        __modal.open = true;
+        __modal.mode = 'rows';
+        __modal.tableIndex = tableIndex;
+        __modal.blockIndex = -1;
+        __modal.items = labels.map((l, idx) => ({id: idx, old: l, text: l}));
+
+        el('modalTitle').textContent = `Ordenar linhas: ${dispVar(t.row_var || '')}`;
+        renderModalRows();
+        abrirModal();
+   }
+
+    function openColModal(tableIndex, blockIndex){
+        if(!__preview || !__preview.ok) return;
+        const t = (__preview.tables || [])[tableIndex];
+        if(!t) return;
+
+        const b = (t.blocks || [])[blockIndex];
+        if(!b) return;
+
+        const labels = (b.col_cats || []).slice();
+        __modal.open = true;
+        __modal.mode = 'cols';
+        __modal.tableIndex = tableIndex;
+        __modal.blockIndex = blockIndex;
+        __modal.items = labels.map((l, idx) => ({id: idx, old: l, text: l}));
+
+        el('modalTitle').textContent = `Ordenar colunas: ${dispVar(t.row_var || '')} × ${dispVar(b.col_var || '')}`;
+        renderModalRows();
+        abrirModal();
+    }
+    // [Streamlit] a área não rola sozinha: o modal abre no trecho visível da página
+    function abrirModal(){
+        const area = window.__areaVisivel ? window.__areaVisivel() : {topo:0, altura:innerHeight};
+        const m = el('modalBackdrop').querySelector('.modal');
+        m.style.maxHeight = Math.max(320, Math.min(760, area.altura - 40)) + 'px';
+        m.style.marginTop = Math.max(10, area.topo + 20) + 'px';
+        el('modalBackdrop').classList.add('open');
+    }
+    function renderModalRows(){
+    const box = el('modalRows');
+    box.innerHTML = '';
+
+    __modal.items.forEach((it, idx)=>{
+      const row = document.createElement('div');
+      row.className = 'r';
+
+      const orig = document.createElement('div');
+      orig.className = 'orig';
+      orig.textContent = it.old;
+      orig.title = it.old;
+
+      const edit = document.createElement('input');
+      edit.className = 'edit';
+      edit.type = 'text';
+      edit.value = it.text;
+      edit.addEventListener('input', ()=>{
+        __modal.items[idx].text = edit.value;
+      });
+
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+
+      const up = document.createElement('button');
+      up.type = 'button';
+      up.className = 'btn-outline btn-sm';
+      up.textContent = '↑';
+      up.disabled = idx === 0;
+      up.addEventListener('click', ()=>{
+        if(idx <= 0) return;
+        const tmp = __modal.items[idx-1];
+        __modal.items[idx-1] = __modal.items[idx];
+        __modal.items[idx] = tmp;
+        renderModalRows();
+      });
+
+      const down = document.createElement('button');
+      down.type = 'button';
+      down.className = 'btn-outline btn-sm';
+      down.textContent = '↓';
+      down.disabled = idx >= (__modal.items.length - 1);
+      down.addEventListener('click', ()=>{
+        if(idx >= (__modal.items.length - 1)) return;
+        const tmp = __modal.items[idx+1];
+        __modal.items[idx+1] = __modal.items[idx];
+        __modal.items[idx] = tmp;
+        renderModalRows();
+      });
+
+      actions.appendChild(up);
+      actions.appendChild(down);
+
+      row.appendChild(orig);
+      row.appendChild(edit);
+      row.appendChild(actions);
+      box.appendChild(row);
+    });
+  }
+
+  function closeModal(){
+    __modal.open = false;
+    __modal.mode = 'rows';
+    __modal.tableIndex = -1;
+    __modal.blockIndex = -1;
+    __modal.items = [];
+    el('modalBackdrop').classList.remove('open');
+  }
+
+  function applyRowModal(){
+    if(!__modal.open || !__preview || !__preview.ok) return closeModal();
+
+    const t = (__preview.tables || [])[__modal.tableIndex];
+    if(!t) return closeModal();
+
+    const sourceItems = __modal.items
+        .slice()
+        .sort((a,b)=> Number(a.id) - Number(b.id));
+
+    const targetItems = __modal.items.slice();
+
+    if(__modal.mode === 'rows'){
+        (t.blocks || []).forEach(b=>{
+        reorderBlockRowsByLabels(b, sourceItems, targetItems);
+        });
+    } else if(__modal.mode === 'cols'){
+        const b = (t.blocks || [])[__modal.blockIndex];
+        if(b){
+        reorderBlockColsByLabels(b, sourceItems, targetItems);
+        }
+    }
+
+    renderPreview(__preview);
+    closeModal();
+    }
+
+  function renderPreview(payload){
+    const wrap = el('wrap');
+    wrap.innerHTML = '';
+
+    if(!payload || !payload.ok){
+      wrap.innerHTML = '<div class="muted">Nada para mostrar.</div>';
+      return;
+    }
+
+    const tables = payload.tables || [];
+    if(!tables.length){
+      wrap.innerHTML = '<div class="muted">Nada para mostrar.</div>';
+      return;
+    }
+
+    const decimals = payload.decimals || 1;
+
+    tables.forEach((t, ti)=>{
+      t.__tableIndex = ti;
+
+      const card = document.createElement('div');
+      card.className = 'card';
+
+      const head = document.createElement('div');
+      head.className = 'cardHead';
+
+      const tw = document.createElement('div');
+      tw.className = 'cardTitleWrap';
+
+      const lab = document.createElement('div');
+      lab.className = 'cardTitleLabel';
+      lab.textContent = `Tabela: ${dispVar(t.row_var)}`;
+
+      const inp = document.createElement('input');
+      inp.className = 'titleInput';
+      inp.type = 'text';
+      inp.value = t.title || (`A.R ${dispVar(t.row_var)}`);
+      inp.addEventListener('input', ()=>{
+        t.title = (inp.value || '').trim();
+      });
+
+      tw.appendChild(lab);
+      tw.appendChild(inp);
+
+      const btns = document.createElement('div');
+      btns.className = 'cardBtns';
+
+      const badge = document.createElement('span');
+      badge.className = 'badge';
+      badge.textContent = `${(t.blocks || []).length} bloco(s)`;
+      btns.appendChild(badge);
+
+      const br = document.createElement('button');
+      br.type = 'button';
+      br.className = 'btn-outline btn-sm';
+      br.textContent = 'Ordenar linhas';
+      br.addEventListener('click', ()=> openRowModal(ti));
+      btns.appendChild(br);
+
+      head.appendChild(tw);
+      head.appendChild(btns);
+      card.appendChild(head);
+
+      card.appendChild(buildCombinedTable(t, decimals));
+      wrap.appendChild(card);
+    });
+  }
+
+  el('btnPick').addEventListener('click', ()=> window.QtBridge?.pickData?.());
+
+  el('mode').addEventListener('change', ()=>{
+    if(mode() === 'queue' && __selRows.size > 1){
+      const first = Array.from(__selRows.values())[0];
+      __selRows = new Set([first]);
+    }
+    updateModeUI();
+    renderAll();
+    renderQueue();  // [Streamlit] correção: no original a fila só reaparecia na próxima ação
+  });
+
+  el('searchRow').addEventListener('input', renderSelectionLists);
+  el('searchCol').addEventListener('input', renderSelectionLists);
+
+  function marcarTodos(set, searchId, msgId, nome){
+    const alvo = visiveis(searchId);
+    const antes = set.size;
+    alvo.forEach(v => set.add(v));
+    const novas = set.size - antes;
+    renderAll();
+    if(!alvo.length) msg(msgId, 'Nenhuma variável na lista para marcar.', 'warn');
+    else if(!novas) msg(msgId, `Todas as ${alvo.length} variáveis da lista já estavam marcadas como ${nome}.`, 'warn');
+    else msg(msgId, `${novas} variável(is) marcada(s). Total de ${nome}: ${set.size}.`, 'ok');
+  }
+  function desmarcarTodos(set, msgId){
+    const n = set.size;
+    set.clear();
+    renderAll();
+    msg(msgId, n ? `${n} variável(is) desmarcada(s).` : 'Nenhuma variável estava marcada.', n ? 'ok' : 'warn');
+  }
+
+  el('btnAllRows').addEventListener('click', ()=>{
+    if(mode() === 'queue'){
+      const alvo = visiveis('searchRow');
+      if(alvo.length) __selRows = new Set([alvo[0]]);
+      renderAll();
+      msg('rowsMsg', 'No modo 2 só uma variável LINHA fica marcada por vez.', 'warn');
+    } else {
+      marcarTodos(__selRows, 'searchRow', 'rowsMsg', 'LINHA');
+    }
+  });
+
+  el('btnNoneRows').addEventListener('click', ()=> desmarcarTodos(__selRows, 'rowsMsg'));
+  el('btnAllCols').addEventListener('click', ()=> marcarTodos(__selCols, 'searchCol', 'colsMsg', 'COLUNA'));
+  el('btnNoneCols').addEventListener('click', ()=> desmarcarTodos(__selCols, 'colsMsg'));
+
+  ['pctMode','decimals','chkDebug','mode'].forEach(id => el(id).addEventListener('change', salvarUi));
+  el('decimals').addEventListener('input', salvarUi);
+  el('wrap').addEventListener('input', salvarUi);   // título da tabela na prévia
+  el('btnModalSave').addEventListener('click', ()=> setTimeout(salvarUi, 50));
+
+  el('btnPreview').addEventListener('click', ()=>{
+    const weightVar = __selectedWeight || '';
+    if(!weightVar){
+      el('status').textContent = 'Selecione o peso.';
+      return;
+    }
+
+    const rowVars = Array.from(__selRows.values());
+    const colVars = Array.from(__selCols.values());
+
+    if(mode() === 'queue' && rowVars.length !== 1){
+      el('status').textContent = 'No modo fila, selecione 1 variável LINHA.';
+      return;
+    }
+
+    if(!rowVars.length || !colVars.length){
+      el('status').textContent = 'Selecione pelo menos 1 LINHA e 1 COLUNA.';
+      return;
+    }
+
+    const payload = {
+      mode: mode(),
+      rowVars,
+      colVars,
+      weightVar,
+      pctMode: el('pctMode').value || 'col',
+      decimals: Math.max(0, Math.min(10, Number(el('decimals').value) || 1))
+    };
+
+    el('status').textContent = 'Calculando...';
+    window.QtBridge?.computePreview?.(JSON.stringify(payload));
+  });
+
+  el('btnAddQueue').addEventListener('click', ()=>{
+    if(mode() !== 'queue') return;
+
+    if(!__preview || !__preview.ok || !(__preview.tables || []).length){
+      el('status').textContent = 'Gere a prévia antes de adicionar à fila.';
+      return;
+    }
+
+    const t = __preview.tables[0];
+    const sig = sigTabela(t);
+    if(Object.prototype.hasOwnProperty.call(__queueSigs, sig)){
+      const pos = __queueSigs[sig] + 1;
+      if(!confirm(`Essa tabela (mesma linha, colunas e peso) já está na fila, no item ${pos}.\n\nSubstituir pela versão atual?`)){
+        el('status').textContent = `Mantido o item ${pos} da fila.`;
+        return;
+      }
+      window.QtBridge?.addToQueueFromPreview?.(JSON.stringify(Object.assign({}, t, {substituir: true})));
+      return;
+    }
+    window.QtBridge?.addToQueueFromPreview?.(JSON.stringify(t));
+  });
+
+  el('btnClearQueue').addEventListener('click', ()=> window.QtBridge?.clearQueue?.());
+
+  el('btnExportXlsx').addEventListener('click', ()=>{
+    const payload = {
+      mode: mode(),
+      displayMap: (__dispMap || {}),
+      previewTables: (__preview && __preview.ok) ? (__preview.tables || []) : [],
+      incluirDebug: !!el('chkDebug').checked
+    };
+    window.QtBridge?.exportXlsx?.(JSON.stringify(payload));
+  });
+
+  el('btnModalCancel').addEventListener('click', closeModal);
+  el('btnModalSave').addEventListener('click', applyRowModal);
+
+  window.__setData = function(payloadJson){
+    try{
+      const p = JSON.parse(payloadJson);
+      el('dataStatus').textContent = p.label || '';
+
+      __vars = (p.columns || []).map(c => c.name);
+      __labels = p.labels || {};
+
+      __dispMap = {};
+      __vars.forEach(v=>{
+        const lab = (__labels[v] || '').trim();
+        __dispMap[v] = lab ? lab : v;
+      });
+
+      __selRows = new Set();
+      __selCols = new Set();
+
+      __weights = p.weight_candidates || [];
+      __selectedWeight = '';
+
+      if(__weights.length){
+        el('weightHint').textContent = 'Mostra primeiro colunas que contêm “peso”.';
+      } else {
+        el('weightHint').textContent = 'Não achei colunas com “peso”. Mostrando todas para você escolher.';
+      }
+
+      if(__weights.length === 1) __selectedWeight = __weights[0];  // [Streamlit] peso automático
+      renderWeightPicker();
+      atualizarHintPeso();
+
+      __preview = null;
+      el('status').textContent = '';
+      el('expStatus').textContent = '';
+      el('meta').textContent = '—';
+
+      updateModeUI();
+      renderAll();
+      renderQueue();
+
+      el('wrap').innerHTML = '<div class="muted">Pronto para gerar a prévia.</div>';
+    }catch(e){
+      console.error(e);
+    }
+  };
+
+  // [Streamlit] painel recolhível
+  function painelRecolhido(){ return document.querySelector('.app').classList.contains('recolhido'); }
+  function definirPainel(recolher, motivo){
+    document.querySelector('.app').classList.toggle('recolhido', !!recolher);
+    el('btnTogglePanel').textContent = recolher ? '⟩ Mostrar painel' : '⟨ Ampliar prévia';
+    let aviso = el('avisoRecolhido');
+    if(!aviso){
+      aviso = document.createElement('div');
+      aviso.id = 'avisoRecolhido';
+      el('wrap').parentNode.insertBefore(aviso, el('wrap'));
+      aviso.style.margin = '10px 12px 0';
+    }
+    aviso.textContent = (recolher && motivo) ? motivo : '';
+  }
+  el('btnTogglePanel').addEventListener('click', ()=>{ definirPainel(!painelRecolhido()); salvarUi(); });
+  el('railBtn').addEventListener('click', ()=>{ definirPainel(false); salvarUi(); });
+  // se a tabela não couber, recolhe o painel sozinho
+  function ajustarParaTabela(){
+    if(painelRecolhido()) return;
+    const wrap = el('wrap');
+    const tab = wrap.querySelector('table');
+    if(tab && tab.scrollWidth > wrap.clientWidth - 24){
+      definirPainel(true, 'O painel foi recolhido para a tabela caber na tela. Use “⟩ Painel” à esquerda para voltar às configurações.');
+    }
+  }
+
+  // ---------------- [Streamlit] prévia visível: acompanha a rolagem da página
+  function posicionarPrevia(){
+    const area = window.__areaVisivel ? window.__areaVisivel() : {topo:0, altura:innerHeight};
+    const app = document.querySelector('.app').getBoundingClientRect().height;
+    const main = el('main');
+    const alt = main.scrollHeight;
+    let y = 0;
+    if(alt <= area.altura) y = Math.max(0, Math.min(area.topo, app - alt));
+    main.style.transform = y ? `translateY(${Math.round(y)}px)` : '';
+    const rail = el('railBtn');
+    let yr = 0;
+    if(painelRecolhido()) yr = Math.max(0, Math.min(area.topo, app - rail.offsetHeight - 10));
+    rail.style.transform = yr ? `translateY(${Math.round(yr)}px) rotate(180deg)` : '';
+  }
+  try{
+    window.parent.document.addEventListener('scroll', posicionarPrevia, true);
+    window.parent.addEventListener('resize', posicionarPrevia);
+  }catch(e){ /* sem acesso à página-mãe: a prévia fica no topo */ }
+  if(window.ResizeObserver) new ResizeObserver(posicionarPrevia).observe(document.body);
+
+  window.__setPreview = function(payloadJson){
+    try{
+      const p = JSON.parse(payloadJson);
+      __preview = p;
+
+      if(!p.ok){
+        el('status').textContent = p.error || 'Erro.';
+        return;
+      }
+
+      el('status').textContent = 'Pronto.';
+      el('meta').textContent = `${(p.tables || []).length} tabela(s)`;
+      renderPreview(p);
+      requestAnimationFrame(ajustarParaTabela);
+      salvarUi();
+    }catch(e){
+      console.error(e);
+      el('status').textContent = 'Erro ao receber prévia.';
+    }
+  };
+
+  window.__setQueueState = function(payloadJson){
+    try{
+      const p = JSON.parse(payloadJson);
+      __queue = p.items || [];
+      __queueSigs = {};
+      __queue.forEach((it, i)=>{ if(it && it.sig) __queueSigs[it.sig] = i; });
+      el('expStatus').textContent = p.message || '';
+      renderQueue();
+
+      if(p.resetRowSelection){
+        __selRows.clear();
+        renderAll();
+      }
+    }catch(e){
+      console.error(e);
+    }
+  };
+</script>
+</body>
+</html>

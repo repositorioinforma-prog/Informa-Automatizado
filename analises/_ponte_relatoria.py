@@ -34,6 +34,7 @@ _PASTA = os.path.join(os.path.dirname(os.path.dirname(__file__)), "componentes")
 _componentes: Dict[str, Any] = {}
 
 _MAX_EVENTOS = 60
+_MAX_DOWNLOADS = 6
 
 
 def _assinatura_pasta(pasta: str) -> str:
@@ -109,9 +110,11 @@ class PonteBase:
         self.n_evento += 1
         ev["n"] = self.n_evento
         self.eventos.append(ev)
-        # downloads são pesados: mantém só os 2 mais recentes na lista
+        # downloads são pesados: mantém só os mais recentes na lista (uma ação
+        # pode gerar vários arquivos de uma vez, ex.: A.R gera 3). Os que a
+        # página já executou são descartados em processar_pedidos ("visto").
         downloads = [e for e in self.eventos if e.get("tipo") == "download"]
-        for velho in downloads[:-2]:
+        for velho in downloads[:-_MAX_DOWNLOADS]:
             self.eventos.remove(velho)
         if len(self.eventos) > _MAX_EVENTOS:
             self.eventos = self.eventos[-_MAX_EVENTOS:]

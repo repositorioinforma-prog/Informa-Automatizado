@@ -23,6 +23,8 @@ from analises.revisor_syntax import modulo_revisor_syntax
 from analises.cruzamentos import modulo_cruzamentos
 from analises.mapa_calor import modulo_mapa_calor
 from analises.correlacao import modulo_correlacao
+from analises.analise_residual import modulo_analise_residual
+from analises.tela_inicial import CHAVE_MENU, INICIO, aplicar_clique_do_inicio, tela_inicial
 from analises.correspondencia_multipla import analise_correspondencia_multipla
 from analises.correspondencia_simples import analise_correspondencia
 from core.dados import carregar_dados
@@ -265,32 +267,44 @@ else:
 
 
 # =========================
+# Menu lateral
+# =========================
+# Os cards da tela inicial (analises/tela_inicial.py) apontam para estes nomes.
+MENU = (
+    INICIO,
+    "[Antigo] Mapas de Correspondência - V1",
+    "[Atual] Mapas de Correspondência - V2",
+    "Processador de Base Reduzida",
+    "Exclusões",
+    "Base nas Múltiplas",
+    "Legendas",
+    "Relatório Automatizado",
+    "Total Automático",
+    "Códigos Individuais",
+    "Gerador de Amostra",
+    "Banco de Amostras",
+    "Ponderação",
+    "Divisor de Tabelas de Regioes",
+    "Padronização de Títulos",
+    "Revisor de Syntax SPSS",
+    "Cruzamentos (Tabelas)",
+    "Mapa de Calor",
+    "Matriz de Correlação",
+    "Análise Residual (A.R)",
+)
+
+
+# =========================
 # Função principal
 # =========================
 def main():
-    analise = st.sidebar.selectbox(
-        "Escolha a análise",
-        (
-            "[Antigo] Mapas de Correspondência - V1",
-            "[Atual] Mapas de Correspondência - V2",
-            "Processador de Base Reduzida",
-            "Exclusões",
-            "Base nas Múltiplas",
-            "Legendas",
-            "Relatório Automatizado",
-            "Total Automático",
-            "Códigos Individuais",
-            "Gerador de Amostra",
-            "Banco de Amostras",
-            "Ponderação",
-            "Divisor de Tabelas de Regioes",
-            "Padronização de Títulos",
-            "Revisor de Syntax SPSS",
-            "Cruzamentos (Tabelas)",
-            "Mapa de Calor",
-            "Matriz de Correlação",
-        ),
-    )
+    # card clicado na tela inicial -> o menu lateral passa a apontar para a ferramenta
+    aplicar_clique_do_inicio(MENU)
+    analise = st.sidebar.selectbox("Escolha a análise", MENU, key=CHAVE_MENU)
+
+    if analise == INICIO:
+        tela_inicial()
+        return
 
     # estes módulos têm upload próprio e não dependem do arquivo carregado abaixo
     if analise == "Processador de Base Reduzida":
@@ -356,6 +370,10 @@ def main():
 
     if analise == "Matriz de Correlação":
         modulo_correlacao()
+        return
+
+    if analise == "Análise Residual (A.R)":
+        modulo_analise_residual()
         return
 
     uploaded_file = st.file_uploader("Carregar Arquivo", type=["csv", "xlsx", "sav"])

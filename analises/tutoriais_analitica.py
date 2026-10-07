@@ -129,6 +129,51 @@ TUTORIAIS = {
 > ✅ Resultado esperado: matriz consistente com o peso, missing tratados, nomes claros, método/casas definidos e arquivo exportado.
 """,
     },
+    "analise_residual": {
+        "titulo": "Análise Residual (A.R)",
+        "resumo": "Cruzar variáveis com peso e destacar onde a diferença é significativa (resíduo ajustado), com exportação para Excel.",
+        "texto": """
+**O que é**
+- Para cada cruzamento (LINHA × COLUNA), a A.R mostra o percentual e, logo abaixo, o **resíduo ajustado (Z)**, no mesmo cálculo do SPSS.
+- **Z ≥ 1,85** → célula **azul** (acima do esperado); **Z ≤ −1,85** → célula **vermelha** (abaixo do esperado). As cores são as do VBA.
+
+**Pré-requisitos**
+- Banco do projeto em **CSV, XLSX ou SAV**, com uma **variável de peso** (obrigatória).
+- No .sav, os *missing de usuário* definidos no SPSS são respeitados (saem do cálculo).
+
+#### 1) Importar o banco (0) Dados)
+- Clique em **Importar CSV/XLSX/SAV** e escolha o arquivo no seletor do navegador.
+
+#### 2) Modo (1) Modo)
+- **1) Gerar automaticamente:** uma tabela por variável LINHA, com todas as COLUNAS escolhidas — gere a prévia e exporte.
+- **2) Gerar 1 por vez + Adicionar à fila:** escolha **1** variável LINHA por vez, gere a prévia e clique em **Adicionar à fila**; repita e exporte a fila.
+- A **fila** fica na **barra lateral** (*Fila da A.R*): cada cartão mostra a linha, as colunas, o peso e o número de blocos. O **×** remove o item, **Exportar XLSX (N)** baixa a fila inteira e **Limpar fila** recomeça.
+- Se a tabela (mesma linha, mesmas colunas e mesmo peso) **já estiver na fila**, o app pergunta se quer **substituir** pela versão atual (ex.: depois de ajustar o título ou a ordem); cancelando, o item da fila continua como estava.
+
+#### 3) Peso e percentual (2) Peso / Percentual)
+- Escolha a **variável de peso** (as que têm “peso” no nome aparecem primeiro). Se o banco tiver **uma única** coluna com “peso”, ela já vem selecionada (aviso em verde).
+- As colunas de peso **não aparecem** nas listas de LINHA e COLUNA.
+- **Percentual exibido:** *Coluna (%)* é o padrão. **Casas decimais (Z)** vale para o resíduo.
+
+#### 4) Variáveis (3) Selecionar variáveis)
+- Marque as **Variáveis LINHA** e as **Variáveis COLUNA**. A busca filtra a lista; **Todos** (verde) marca as que estão na lista e mostra quantas estão marcadas; **Nenhum** (vermelho) desmarca. As marcadas ficam destacadas em verde e os nomes aparecem inteiros.
+- Clique em **Gerar prévia**. As linhas vêm ordenadas pelo total (maior → menor) e *Não sei / Branco/Nulo / Não sabe / Sem resposta* ficam no fim.
+- As **categorias das colunas** seguem a **ordem dos códigos do SPSS** (ex.: 1 Norte, 2 Centro, 3 Sul), e não a ordem em que aparecem no banco. *Ordenar colunas* continua disponível para ajustes.
+- Na prévia, **Ordenar linhas** abre a janela para ajustar a ordem com ↑/↓.
+- Se a tabela não couber, o painel da esquerda **recolhe sozinho**; **⟩ Painel** traz as configurações de volta e **⟨ Ampliar prévia** recolhe de novo.
+
+#### 5) Nomes (4) Renomear variáveis)
+- Ajuste os nomes exibidos (o campo cresce para mostrar o texto inteiro); muda só a tela e a exportação, não o banco.
+
+#### 6) Exportar (5) Fila / Exportação)
+- **Exportar XLSX** baixa **analise_residual.xlsx** (uma aba por tabela, título “A.R …”, DIN, bordas e cores do VBA). No modo 1 exporta a prévia; no modo 2, a fila (que também pode ser exportada pela barra lateral).
+- **Arquivos de conferência** (desmarcado por padrão): marque para receber também **analise_residual_DEBUG.xlsx** (observado, esperado e Z de cada bloco) e **analise_residual_CASES_DEBUG.xlsx** (casos usados em cada cruzamento).
+
+> 💡 Com a conferência marcada, o navegador pode perguntar se o site pode **baixar vários arquivos** — permita para receber os três.
+
+> 🔁 Ao trocar de ferramenta e voltar, a A.R volta como estava: banco, modo, peso, seleções, nomes, percentual, casas decimais, prévia e fila.
+""",
+    },
     "cruzamentos": {
         "titulo": "Cruzamentos (Tabelas)",
         "resumo": "Importar o banco, configurar variáveis e peso, gerar tabelas, ordenar linhas/colunas e exportar Excel.",

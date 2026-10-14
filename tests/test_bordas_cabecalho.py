@@ -78,8 +78,8 @@ class TestCodigo17(unittest.TestCase):
             self.assertEqual(_estilo(self.ws, r, 8, "right"), "thick")
             self.assertEqual(_estilo(self.ws, r, 1, "right"), "thick")   # A | Total
             self.assertEqual(_estilo(self.ws, r, 2, "left"), "thick")
-            self.assertEqual(_estilo(self.ws, r, 2, "right"), "thick")   # Total | segmento
-            self.assertEqual(_estilo(self.ws, r, 3, "left"), "thick")
+            self.assertEqual(_estilo(self.ws, r, 2, "right"), "thin")    # Total | segmento: fina
+            self.assertEqual(_estilo(self.ws, r, 3, "left"), "thin")
 
     def test_divisorias_internas_intocadas(self):
         # entre subcategorias (linha das subcategorias) e linha sob o grupo
@@ -128,7 +128,8 @@ class TestSequenciaDoAssistente(unittest.TestCase):
             self.assertEqual(_estilo(ws, r, 1, "left"), "medium")
             self.assertEqual(_estilo(ws, r, 8, "right"), "medium")
             self.assertEqual(_estilo(ws, r, 2, "left"), "medium")
-            self.assertEqual(_estilo(ws, r, 2, "right"), "medium")
+            self.assertEqual(_estilo(ws, r, 2, "right"), "thin")    # Total | segmento continua fina
+            self.assertEqual(_estilo(ws, r, 3, "left"), "thin")
         self.assertEqual(_estilo(ws, b, 4, "right"), "thin")  # divisória interna
         # nenhuma borda espessa sobrando na planilha
         for linha in ws.iter_rows():

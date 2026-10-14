@@ -384,6 +384,28 @@ def _engrossar(ws, r, c, lados, mesclagem_de=None):
         ancora.border = _com_lados_espessos(ancora.border, lados_ancora)
 
 
+def _afinar(ws, r, c, lado, mesclagem_de=None):
+    """Deixa o `lado` da célula (r, c) com borda FINA (preserva a cor). Como
+    em `_engrossar`, se o lado está na borda externa de uma mesclagem, a
+    âncora também recebe a borda — senão o openpyxl a desfaz ao recarregar."""
+    def _troca(cel):
+        b = cel.border
+        atual = getattr(b, lado)
+        cor = atual.color if (atual is not None and atual.color is not None) else None
+        lados = {n: getattr(b, n) for n in ("left", "right", "top", "bottom")}
+        lados[lado] = Side(style="thin", color=cor)
+        cel.border = Border(diagonal=b.diagonal, diagonalUp=b.diagonalUp, diagonalDown=b.diagonalDown,
+                            outline=b.outline, vertical=b.vertical, horizontal=b.horizontal, **lados)
+    _troca(ws.cell(row=r, column=c))
+    rng = (mesclagem_de or {}).get((r, c))
+    if rng is None or (r, c) == (rng.min_row, rng.min_col):
+        return
+    na_borda = {"left": c == rng.min_col, "right": c == rng.max_col,
+                "top": r == rng.min_row, "bottom": r == rng.max_row}[lado]
+    if na_borda:
+        _troca(ws.cell(row=rng.min_row, column=rng.min_col))
+
+
 def _mapa_mesclagens(ws):
     mapa = {}
     for rng in ws.merged_cells.ranges:
@@ -430,8 +452,9 @@ def aplicar_codigo_17(ws):
     tabela. Aplica borda espessa em:
       - linha de cima e linha de baixo do cabeçalho (A até a última coluna);
       - lateral esquerda (coluna A) e lateral direita (última coluna);
-      - laterais esquerda e direita da coluna "Total" (B).
-    As divisórias internas entre as subcategorias continuam como estão.
+      - lateral esquerda da coluna "Total" (B).
+    A lateral DIREITA da célula "Total" (divisa com o primeiro segmento) fica
+    FINA. As divisórias internas entre as subcategorias continuam como estão.
 
     Precisa rodar DEPOIS do código 02 (que rebaixa toda borda espessa pra
     média) e das etapas que mudam a estrutura da tabela (05, 07).
@@ -464,12 +487,13 @@ def aplicar_codigo_17(ws):
         for r in range(topo, base + 1):
             _engrossar(ws, r, 1, {"left"}, mapa)
             _engrossar(ws, r, ultima, {"right"}, mapa)
-            # laterais da coluna "Total"
+            # lateral esquerda da coluna "Total" (divisa com a coluna A)
             _engrossar(ws, r, 2, {"left"}, mapa)
-            _engrossar(ws, r, col_total_fim, {"right"}, mapa)
             _engrossar(ws, r, 1, {"right"}, mapa)
+            # lateral direita do "Total" (divisa com o 1º segmento): fina
             if col_total_fim + 1 <= ultima:
-                _engrossar(ws, r, col_total_fim + 1, {"left"}, mapa)
+                _afinar(ws, r, col_total_fim, "right", mapa)
+                _afinar(ws, r, col_total_fim + 1, "left", mapa)
             _engrossar_vizinho_se_tiver_borda(ws, r, ultima + 1, "left", mapa)
         formatados += 1
     return formatados
@@ -932,8 +956,8 @@ def aplicar_codigo_06(ws):
 # =========================================================
 def aplicar_codigo_08(ws):
     """
-    Em toda linha 'Base'/'Base reduzida', marca com '*' os valores entre
-    20 e 30 (exclusivos) e insere uma linha de nota "*Base pequena para
+    Em toda linha 'Base'/'Base reduzida', marca com '*' os valores abaixo
+    de 30 (maiores que zero) e insere uma linha de nota "*Base pequena para
     análise estatística" logo abaixo (pulando a linha 'Média', se ela
     estiver a até 3 linhas de distância) — sempre em fonte DIN tamanho 9.
     """
@@ -971,7 +995,9 @@ def _analisar_linha_codigo_08(ws, linha, max_col):
     for coluna in range(1, col_max + 1):
         cel = ws.cell(row=linha, column=coluna)
         valor = cel.value
-        if isinstance(valor, (int, float)) and 20 < valor < 30:
+        # abaixo de 30 (antes: só entre 20 e 30). Zero fica de fora: coluna sem
+        # entrevistas não é "base pequena". bool é subclasse de int — ignora.
+        if isinstance(valor, (int, float)) and not isinstance(valor, bool) and 0 < valor < 30:
             cel.value = f"{valor}*"
             cel.alignment = _com_wrap_text(cel.alignment, False)
 

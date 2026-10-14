@@ -957,6 +957,17 @@ def excluir_colunas_base_reduzida(ws, limite=25, texto_alvo="BASE REDUZIDA"):
         if not colunas_para_excluir:
             continue
 
+        # Se a ÚLTIMA coluna da tabela sai, a coluna que passa a ser a última
+        # herda uma divisória interna fina na direita. Guarda em quais linhas
+        # a tabela tinha borda direita, pra fechar a nova última coluna com
+        # borda média ("Bordas Externas Espessas" do Excel) no fim.
+        linhas_contorno = []
+        if ultima_col_linha in colunas_para_excluir:
+            for r in range(inicio, fim + 1):
+                lado = ws.cell(row=r, column=ultima_col_linha).border.right
+                if lado is not None and lado.style:
+                    linhas_contorno.append((r, lado.color))
+
         faixas_capturadas = []
         for rng in list(ws.merged_cells.ranges):
             if rng.min_row <= fim and rng.max_row >= inicio:
@@ -994,4 +1005,33 @@ def excluir_colunas_base_reduzida(ws, limite=25, texto_alvo="BASE REDUZIDA"):
                         end_row=max_row, end_column=novo_max_col
                     )
 
+        if linhas_contorno:
+            _fechar_borda_direita(ws, ultima_col_linha - len(colunas_para_excluir), linhas_contorno)
+
     return colunas_excluidas_total
+
+
+def _fechar_borda_direita(ws, coluna, linhas_cor, estilo="medium"):
+    """Borda direita `estilo` na `coluna` das linhas dadas ([(linha, cor)]).
+    Numa célula mesclada cuja borda direita é essa coluna, aplica também na
+    âncora — ao reabrir o arquivo, o openpyxl recopia as bordas externas da
+    mesclagem a partir da âncora."""
+    from openpyxl.styles import Border, Side
+
+    def _com_direita(b, cor):
+        return Border(left=b.left, right=Side(style=estilo, color=cor), top=b.top, bottom=b.bottom,
+                      diagonal=b.diagonal, diagonalUp=b.diagonalUp, diagonalDown=b.diagonalDown,
+                      outline=b.outline, vertical=b.vertical, horizontal=b.horizontal)
+
+    mescla = {}
+    for rng in ws.merged_cells.ranges:
+        if rng.max_col == coluna:
+            for r in range(rng.min_row, rng.max_row + 1):
+                mescla[r] = rng
+    for r, cor in linhas_cor:
+        cel = ws.cell(row=r, column=coluna)
+        cel.border = _com_direita(cel.border, cor)
+        rng = mescla.get(r)
+        if rng is not None and (r, coluna) != (rng.min_row, rng.min_col):
+            ancora = ws.cell(row=rng.min_row, column=rng.min_col)
+            ancora.border = _com_direita(ancora.border, cor)

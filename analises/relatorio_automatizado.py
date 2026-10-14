@@ -55,6 +55,7 @@ from core.total_automatico_math import (
     remover_linha_branca_multiplas_sem_base,
 )
 from core.divisor_tabelas_math import processar_workbook as processar_divisor_tabelas
+from core.avisos_consistencia_math import gerar_avisos_consistencia, textos_avisos
 from core.relatorio_automatizado_math import (
     aplicar_codigo_01,
     aplicar_codigo_02,
@@ -762,6 +763,11 @@ def modulo_relatorio_automatizado():
                 f"marcada(s) como 'Base reduzida'). Vale conferir se é "
                 f"intencional:\n\n" + lista_divergentes
             )
+
+        # Avisos de consistência: segmento > Total, mesmo título com bases
+        # diferentes e candidato que some/muda de grafia entre cenários.
+        for msg in textos_avisos(gerar_avisos_consistencia(ws_final)):
+            st.warning(msg)
 
         st.warning(
             "Checklist antes de entregar:\n\n"

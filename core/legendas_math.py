@@ -6,6 +6,7 @@ logo depois da linha "Pergunta:" de cada bloco.
 
 Sem dependência do Streamlit — pode ser testado isoladamente.
 """
+import re
 import openpyxl
 import unicodedata
 
@@ -624,6 +625,10 @@ def _extrair_codigo_numerico_inicial(valor):
     if not resto:
         return str(int(digitos))
     if resto[0] in "([":
+        return str(int(digitos))
+    # "1 - Mambucaba (27,28%): ..." — número, hífen/travessão e um NOME
+    # (letra logo depois). "16 - 24" (faixa) continua de fora.
+    if re.match(r"^[-\u2013\u2014]\s*[A-Z]", resto):
         return str(int(digitos))
     return ""
 

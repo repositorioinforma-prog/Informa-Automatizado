@@ -24,6 +24,7 @@ from analises.cruzamentos import modulo_cruzamentos
 from analises.mapa_calor import modulo_mapa_calor
 from analises.correlacao import modulo_correlacao
 from analises.analise_residual import modulo_analise_residual
+from analises.controle import modulo_controle
 from analises.tela_inicial import CHAVE_MENU, INICIO, aplicar_clique_do_inicio, tela_inicial
 from analises.correspondencia_multipla import analise_correspondencia_multipla
 from analises.correspondencia_simples import analise_correspondencia
@@ -291,6 +292,7 @@ MENU = (
     "Mapa de Calor",
     "Matriz de Correlação",
     "Análise Residual (A.R)",
+    "Controle Geral",
 )
 
 
@@ -374,6 +376,10 @@ def main():
 
     if analise == "Análise Residual (A.R)":
         modulo_analise_residual()
+        return
+
+    if analise == "Controle Geral":
+        modulo_controle()
         return
 
     uploaded_file = st.file_uploader("Carregar Arquivo", type=["csv", "xlsx", "sav"])

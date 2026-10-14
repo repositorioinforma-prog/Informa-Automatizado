@@ -47,7 +47,7 @@ from core.residuos_math import (  # noqa: F401
 )
 
 #: precisa bater com <meta name="versao-tela"> de componentes/relatoria_residual/index.html
-VERSAO_TELA = "4"
+VERSAO_TELA = "5"
 
 _MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
@@ -99,6 +99,61 @@ class PonteResidual(PonteBase):
                 self.display_map = {str(k): str(v) for k, v in dm.items()}
         except Exception:  # noqa: BLE001
             pass
+
+    def estado_tela(self) -> Dict[str, Any]:
+        try:
+            e = json.loads(getattr(self, "ui_state_json", "") or "{}")
+            return e if isinstance(e, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def modo_tela(self) -> str:
+        return "queue" if self.estado_tela().get("mode") == "queue" else "batch"
+
+    def tabelas_previa(self) -> List[Dict[str, Any]]:
+        prev = self.estado_tela().get("preview") or {}
+        tabs = prev.get("tables") if isinstance(prev, dict) and prev.get("ok") else None
+        return tabs if isinstance(tabs, list) else []
+
+    def removerDaPrevia(self, sig: str) -> None:
+        """[Streamlit] lixeira da barra lateral no modo 1: tira a tabela da prévia."""
+        e = self.estado_tela()
+        prev = e.get("preview") or {}
+        tabs = [t for t in (prev.get("tables") or []) if self.assinatura(t) != sig]
+        if len(tabs) == len(prev.get("tables") or []):
+            return
+        prev["tables"] = tabs
+        e["preview"] = prev if tabs else None
+        self.ui_state_json = json.dumps(e, ensure_ascii=False)
+        self.run_js(f"window.__removerDaPrevia({json.dumps(json.dumps(sig))});")
+        self.notificar("Tabela tirada da prévia.", "🗑️")
+
+    def arquivos_xlsx(self, tables: List[Dict[str, Any]], incluir_debug: bool = False) -> Dict[str, bytes]:
+        """[Streamlit] mesmos arquivos do exportXlsx (principal e, se pedido, _DEBUG e _CASES_DEBUG),
+        em cache enquanto as tabelas e os nomes não mudam."""
+        dm = dict(getattr(self, "display_map", {}) or {})
+        chave = (json.dumps(tables, sort_keys=True, ensure_ascii=False, default=str),
+                 json.dumps(dm, sort_keys=True), bool(incluir_debug))
+        cache = getattr(self, "_cache_arquivos", None)
+        if cache and cache[0] == chave:
+            return cache[1]
+        tmp_dir = tempfile.mkdtemp(prefix="ar_lat_")
+        try:
+            base = os.path.join(tmp_dir, "analise_residual.xlsx")
+            self._export_tables(tables, dm, base)
+            caminhos = [base]
+            if incluir_debug:
+                self._export_debug_tables(tables, base[:-5] + "_DEBUG.xlsx")
+                self._export_case_level_debug(tables, base[:-5] + "_CASES_DEBUG.xlsx")
+                caminhos += [base[:-5] + "_DEBUG.xlsx", base[:-5] + "_CASES_DEBUG.xlsx"]
+            arquivos = {}
+            for c in caminhos:
+                with open(c, "rb") as f:
+                    arquivos[os.path.basename(c)] = f.read()
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        self._cache_arquivos = (chave, arquivos)
+        return arquivos
 
     def xlsx_da_fila(self) -> bytes:
         chave = (getattr(self, "versao_fila", 0), json.dumps(getattr(self, "display_map", {}), sort_keys=True))
@@ -1209,7 +1264,7 @@ class PonteResidual(PonteBase):
             self.run_js(f"window.__restoreUiState({json.dumps(self.ui_state_json)});")
 
 
-def _itens_fila(ponte: PonteResidual) -> List[Dict[str, Any]]:
+def _itens_fila(ponte: PonteResidual, tabelas: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     dm = getattr(ponte, "display_map", {}) or {}
 
     def disp(v):
@@ -1217,7 +1272,7 @@ def _itens_fila(ponte: PonteResidual) -> List[Dict[str, Any]]:
         return dm.get(v) or ponte.var_labels.get(v) or v
 
     itens = []
-    for it in ponte.queue:
+    for it in (ponte.queue if tabelas is None else tabelas):
         blocos = it.get("blocks") or []
         itens.append({
             "sig": ponte.assinatura(it),
@@ -1233,14 +1288,45 @@ def _itens_fila(ponte: PonteResidual) -> List[Dict[str, Any]]:
 
 
 def _fila_na_barra_lateral(ponte: PonteResidual) -> None:
+    """[Streamlit] exportação na barra lateral (antiga etapa "5) Fila / Exportação" da página):
+    no modo 1, as tabelas da prévia; no modo 2, a fila."""
+    fila = ponte.modo_tela() == "queue"
+    tabelas = (lambda: ponte.queue) if fila else ponte.tabelas_previa
+    debug = bool(st.session_state.get("ar_debug", st.session_state.get("ar_debug__salvo", False)))
+
+    def _exportar():
+        tabs = tabelas()
+        if not tabs:
+            return None
+        return {"rotulo": f"Exportar XLSX ({len(tabs)})",
+                "dados": lambda: ponte.arquivos_xlsx(tabs, debug)["analise_residual.xlsx"],
+                "arquivo": "analise_residual.xlsx", "mime": _MIME_XLSX}
+
     pilha_lateral(
-        ponte, prefixo="ar", itens=lambda: _itens_fila(ponte), remover=ponte.removerDaFila,
-        titulo="Fila da A.R",
-        vazio_msg="Vazia. No modo 2, gere a prévia e clique em “Adicionar à fila”.",
-        exportar=lambda: {"rotulo": f"Exportar XLSX ({len(ponte.queue)})", "dados": ponte.xlsx_da_fila,
-                          "arquivo": "analise_residual.xlsx", "mime": _MIME_XLSX},
-        limpar=ponte.clearQueue, rotulo_limpar="Limpar fila",
+        ponte, prefixo="ar",
+        itens=(lambda: _itens_fila(ponte)) if fila else (lambda: _itens_fila(ponte, ponte.tabelas_previa())),
+        remover=ponte.removerDaFila if fila else ponte.removerDaPrevia,
+        titulo="Fila da A.R" if fila else "Prévia da A.R",
+        vazio_msg=("Vazia. No modo 2, gere a prévia e clique em “Adicionar à fila”." if fila
+                   else "Gere a prévia (modo 1) para exportar as tabelas daqui."),
+        exportar=_exportar,
+        limpar=ponte.clearQueue if fila else None, rotulo_limpar="Limpar fila",
     )
+    tabs = tabelas()
+    if not tabs:
+        return
+    with st.sidebar:
+        # a escolha volta depois de trocar de ferramenta (o Streamlit apaga o valor de widgets não desenhados)
+        if "ar_debug" not in st.session_state:
+            st.session_state["ar_debug"] = bool(st.session_state.get("ar_debug__salvo", False))
+        st.checkbox("Baixar também os arquivos de conferência (_DEBUG e _CASES_DEBUG)", key="ar_debug")
+        st.session_state["ar_debug__salvo"] = bool(st.session_state["ar_debug"])
+        if debug:
+            arquivos = ponte.arquivos_xlsx(tabs, True)
+            for nome, rotulo in (("analise_residual_DEBUG.xlsx", "Baixar _DEBUG"),
+                                 ("analise_residual_CASES_DEBUG.xlsx", "Baixar _CASES_DEBUG")):
+                st.download_button(rotulo, data=arquivos[nome], file_name=nome, mime=_MIME_XLSX, key=f"ar_dl_{nome}",
+                                   use_container_width=True)
 
 
 def modulo_analise_residual():

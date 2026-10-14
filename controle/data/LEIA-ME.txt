@@ -1,0 +1,13 @@
+BASE BRASIL
+===========
+
+Para uso sem upload manual, coloque nesta pasta a planilha geográfica com um destes nomes:
+
+- Cidades_Bairros_Distritos - Brasil.xlsx
+- Cidades_Bairros_Distritos - Brasil(1).xlsx
+
+O aplicativo tenta identificar automaticamente colunas equivalentes a:
+UF, Município/Cidade, Código do Município, Distrito, Código do Distrito e Bairro/Localidade.
+
+A Base Brasil identifica o que a localidade é e onde pertence. Ela NÃO define a amostra do projeto.
+A amostra/codificação válida continua sendo definida pelos VALUE LABELS importados na interface.

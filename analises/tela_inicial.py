@@ -3,16 +3,18 @@ Tela inicial: seções com cards que abrem as ferramentas do menu lateral.
 
 Para mudar a tela, edite só a lista SECOES abaixo:
 - uma seção = {"titulo", "sub", "cor", "icone", "largura", "layout", "cards"}
-    cor: "azul" | "roxo" | "verde" | "laranja" | "violeta"
+    cor: "azul" | "roxo" | "verde" | "laranja" | "violeta" | "ciano"
     largura: colunas de 12 (7 + 5 numa linha, 12 = linha inteira)
     layout: "vertical" (ícone em cima) | "horizontal" (ícone ao lado)
+    colunas: (opcional) cards por linha; sem isso, todos numa linha só
 - um card = {"titulo", "sub", "icone", "alvo"}
     alvo: o nome EXATO da opção do menu lateral (MENU em app.py) que o card
     abre. Sem alvo (None) o card aparece como "Em breve".
 Ícones disponíveis: ver o objeto I em componentes/tela_inicial/index.html
 ("calendario", "documento", "barras", "engrenagem", "banco", "codigo",
 "tabela", "pessoas", "mapa", "dispersao", "linha", "validacao",
-"codificacao", "balanca") e "aa" (texto "Aa").
+"codificacao", "balanca", "residuo", "lixeira", "etiqueta", "dividir", "lupa",
+"amostra", "reduzir") e "aa" (texto "Aa").
 """
 from __future__ import annotations
 
@@ -30,11 +32,11 @@ _CHAVE_ULTIMO = "inicio_ultimo_clique"
 SECOES: List[Dict[str, Any]] = [
     {
         "titulo": "Programações", "sub": "Gere e gerencie as programações de tabelas.",
-        "cor": "azul", "icone": "calendario", "largura": 7, "layout": "vertical",
-        "cards": [  # com outro funcionário — entram quando forem integradas ao app
-            {"titulo": "Syntax", "sub": "Tabelas no SPSS", "icone": "codigo", "alvo": None},
-            {"titulo": "Total", "sub": "Base total", "icone": "tabela", "alvo": None},
-            {"titulo": "Completo", "sub": "Com todos os segmentos", "icone": "pessoas", "alvo": None},
+        "cor": "azul", "icone": "calendario", "largura": 7,
+        "layout": "horizontal",
+        "cards": [  # app desenvolvido por fora (um botão só com as 3 funções) — entra quando for integrado
+            {"titulo": "Gerador de Programações SPSS", "sub": "Syntax, Total, Completo e Perfil em um só lugar",
+             "icone": "codigo", "alvo": None},
         ],
     },
     {
@@ -53,14 +55,15 @@ SECOES: List[Dict[str, Any]] = [
             {"titulo": "Mapa de Correspondência", "sub": "Visualização de associações entre variáveis",
              "icone": "dispersao", "alvo": "[Atual] Mapas de Correspondência - V2"},
             {"titulo": "Correlação", "sub": "Análise de variáveis", "icone": "linha", "alvo": "Matriz de Correlação"},
-            {"titulo": "AR", "sub": "Análise Residual", "icone": "aa", "alvo": "Análise Residual (A.R)"},
+            {"titulo": "AR", "sub": "Análise Residual", "icone": "residuo", "alvo": "Análise Residual (A.R)"},
         ],
     },
     {
         "titulo": "Controle", "sub": "Valide e monitore os resultados.",
         "cor": "laranja", "icone": "engrenagem", "largura": 5, "layout": "horizontal",
         "cards": [
-            {"titulo": "Validação", "sub": "Verificação de consistência", "icone": "validacao", "alvo": None},
+            {"titulo": "Controle Geral", "sub": "Recodificação geográfica, duplicidades e validação eleitoral",
+             "icone": "validacao", "alvo": "Controle Geral"},
         ],
     },
     {
@@ -70,6 +73,29 @@ SECOES: List[Dict[str, Any]] = [
             {"titulo": "Codificação", "sub": "Gerencie categorias e rótulos", "icone": "codificacao", "alvo": None},
             {"titulo": "Ponderação", "sub": "Calcule e aplique os pesos da amostra", "icone": "balanca",
              "alvo": "Ponderação"},
+        ],
+    },
+    {
+        "titulo": "Validações", "sub": "Ferramentas de apoio para conferir bases, tabelas, amostras e syntax.",
+        "cor": "ciano", "icone": "validacao", "largura": 12, "layout": "vertical", "colunas": 5,
+        "cards": [
+            {"titulo": "Processador de Base Reduzida", "sub": "Base reduzida a partir do banco",
+             "icone": "reduzir", "alvo": "Processador de Base Reduzida"},
+            {"titulo": "Exclusões", "sub": "Casos a excluir do banco", "icone": "lixeira", "alvo": "Exclusões"},
+            {"titulo": "Base nas Múltiplas", "sub": "Bases das perguntas de múltipla resposta", "icone": "tabela",
+             "alvo": "Base nas Múltiplas"},
+            {"titulo": "Legendas", "sub": "Legendas das tabelas", "icone": "etiqueta", "alvo": "Legendas"},
+            {"titulo": "Códigos Individuais", "sub": "Conferência código a código", "icone": "codificacao",
+             "alvo": "Códigos Individuais"},
+            {"titulo": "Gerador de Amostra", "sub": "Distribuição da amostra", "icone": "amostra",
+             "alvo": "Gerador de Amostra"},
+            {"titulo": "Banco de Amostras", "sub": "Amostras já geradas", "icone": "banco", "alvo": "Banco de Amostras"},
+            {"titulo": "Divisor de Tabelas de Regiões", "sub": "Separa as tabelas por região", "icone": "dividir",
+             "alvo": "Divisor de Tabelas de Regioes"},
+            {"titulo": "Padronização de Títulos", "sub": "Títulos das tabelas no padrão", "icone": "aa",
+             "alvo": "Padronização de Títulos"},
+            {"titulo": "Revisor de Syntax SPSS", "sub": "Confere a syntax antes de rodar", "icone": "lupa",
+             "alvo": "Revisor de Syntax SPSS"},
         ],
     },
 ]

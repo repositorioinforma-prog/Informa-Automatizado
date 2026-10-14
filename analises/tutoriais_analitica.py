@@ -141,6 +141,8 @@ TUTORIAIS = {
 - Banco do projeto em **CSV, XLSX ou SAV**, com uma **variável de peso** (obrigatória).
 - No .sav, os *missing de usuário* definidos no SPSS são respeitados (saem do cálculo).
 
+> 🧹 Clique no título de uma etapa para **recolher** ou abrir (fechada, ela mostra um resumo do que foi escolhido). **Recolher etapas**, no topo do painel, fecha ou abre todas.
+
 #### 1) Importar o banco (0) Dados)
 - Clique em **Importar CSV/XLSX/SAV** e escolha o arquivo no seletor do navegador.
 
@@ -165,13 +167,12 @@ TUTORIAIS = {
 #### 5) Nomes (4) Renomear variáveis)
 - Ajuste os nomes exibidos (o campo cresce para mostrar o texto inteiro); muda só a tela e a exportação, não o banco.
 
-#### 6) Exportar (5) Fila / Exportação)
-- **Exportar XLSX** baixa **analise_residual.xlsx** (uma aba por tabela, título “A.R …”, DIN, bordas e cores do VBA). No modo 1 exporta a prévia; no modo 2, a fila (que também pode ser exportada pela barra lateral).
-- **Arquivos de conferência** (desmarcado por padrão): marque para receber também **analise_residual_DEBUG.xlsx** (observado, esperado e Z de cada bloco) e **analise_residual_CASES_DEBUG.xlsx** (casos usados em cada cruzamento).
+#### 6) Exportar (barra lateral)
+- A exportação fica na **barra lateral**, à esquerda. No modo 1 ela mostra **Prévia da A.R** (as tabelas da prévia, com a ordem e os títulos ajustados); no modo 2, a **Fila da A.R**. O **×** de um cartão tira a tabela.
+- **Exportar XLSX (N)** baixa **analise_residual.xlsx** (uma aba por tabela, título “A.R …”, DIN, bordas e cores do VBA).
+- **Arquivos de conferência** (desmarcado por padrão): marque para aparecerem os botões **Baixar _DEBUG** (observado, esperado e Z de cada bloco) e **Baixar _CASES_DEBUG** (casos usados em cada cruzamento).
 
-> 💡 Com a conferência marcada, o navegador pode perguntar se o site pode **baixar vários arquivos** — permita para receber os três.
-
-> 🔁 Ao trocar de ferramenta e voltar, a A.R volta como estava: banco, modo, peso, seleções, nomes, percentual, casas decimais, prévia e fila.
+> 🔁 Ao trocar de ferramenta e voltar, a A.R volta como estava: banco, modo, peso, seleções, nomes, percentual, casas decimais, etapas recolhidas, prévia e fila.
 """,
     },
     "cruzamentos": {

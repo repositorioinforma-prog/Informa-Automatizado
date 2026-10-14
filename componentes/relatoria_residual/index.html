@@ -2,7 +2,7 @@
 <html lang="pt-br">
 <head>
   <meta charset="utf-8"/>
-  <meta name="versao-tela" content="4" />
+  <meta name="versao-tela" content="5" />
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
   <title>Análise Residual</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700;800;900&display=swap"/>
@@ -27,6 +27,21 @@
     #avisoRecolhido:empty{display:none}
     .panel{border-right:1px solid #eee;padding:4px 16px 16px 2px;background:#fff}
     h1{font-size:18px;margin:0 0 12px}
+    /* [Streamlit] etapas recolhíveis */
+    .box > h2{cursor:pointer;user-select:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .box > h2::before{content:"▾";font-size:12px;color:#64748b;width:12px;transition:transform .15s}
+    .box.fechado > h2::before{transform:rotate(-90deg)}
+    .box > h2:hover{color:#1d4ed8}
+    .box.fechado > :not(h2){display:none !important}
+    .box.fechado{padding-bottom:10px}
+    .box.fechado > h2{margin:0 !important}
+    .resumoEtapa{display:none;font-size:12px;font-weight:600;color:#64748b;margin-left:auto;max-width:60%;
+                 overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .box.fechado .resumoEtapa{display:inline}
+    .panelTools{display:flex;justify-content:flex-end;margin:0 0 8px}
+    .panelTools button{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid #cbd5e1;background:#fff;
+                       color:#334155;font-weight:600}
+    .panelTools button:hover{background:#eff6ff;border-color:#2563eb}
     h2{font-size:14px;margin:16px 0 8px}
     label{font-size:13px;display:block;margin:8px 0 6px}
     small{color:#666;font-size:12px}
@@ -137,10 +152,11 @@
 <div class="app">
   <aside class="panel">
     <button id="railBtn" type="button" title="Mostrar o painel de configurações">⟩ Painel</button>
+    <div class="panelTools"><button id="btnEtapas" type="button" title="Recolher ou abrir todas as etapas">Recolher etapas</button></div>
     <!-- título já aparece no cabeçalho da página do Streamlit -->
 
     <div class="box">
-      <h2 style="margin:0 0 8px">0) Dados</h2>
+      <h2 style="margin:0 0 8px">0) Dados<span class="resumoEtapa" id="resumo0"></span></h2>
       <label>Importar banco</label>
       <div class="inline">
         <button id="btnPick" class="btn-outline" type="button">Importar CSV/XLSX/SAV</button>
@@ -149,7 +165,7 @@
     </div>
 
     <div class="box">
-      <h2 style="margin:0 0 8px">1) Modo</h2>
+      <h2 style="margin:0 0 8px">1) Modo<span class="resumoEtapa" id="resumo1"></span></h2>
       <select id="mode" style="width:100%">
         <option value="batch">1) Gerar automaticamente (1 tabela por variável LINHA)</option>
         <option value="queue">2) Gerar 1 por vez + Adicionar à fila</option>
@@ -158,7 +174,7 @@
     </div>
 
     <div class="box">
-      <h2 style="margin:0 0 8px">2) Peso / Percentual</h2>
+      <h2 style="margin:0 0 8px">2) Peso / Percentual<span class="resumoEtapa" id="resumo2"></span></h2>
 
       <label>Variável de peso (obrigatório)</label>
       <div id="weightList" class="weightList"></div>
@@ -176,7 +192,7 @@
     </div>
 
     <div class="box">
-      <h2 style="margin:0 0 8px">3) Selecionar variáveis</h2>
+      <h2 style="margin:0 0 8px">3) Selecionar variáveis<span class="resumoEtapa" id="resumo3"></span></h2>
 
       <div style="margin-bottom:12px">
         <label>Variáveis LINHA</label>
@@ -214,24 +230,22 @@
     </div>
 
     <div class="box">
-      <h2 style="margin:0 0 8px">4) Renomear variáveis</h2>
+      <h2 style="margin:0 0 8px">4) Renomear variáveis<span class="resumoEtapa" id="resumo4"></span></h2>
       <small class="muted">Isso muda apenas o nome exibido/Exportação (não altera o banco).</small>
       <div id="renameList" class="renameList"></div>
     </div>
 
-    <div class="box">
-      <h2 style="margin:0 0 8px">5) Fila / Exportação</h2>
-      <div class="inline" style="margin-top:6px">
-        <button id="btnClearQueue" class="btn-outline" type="button" style="display:none">Limpar fila</button>
-        <button id="btnExportXlsx" class="btn-primary" type="button">Exportar XLSX</button>
-        <small id="expStatus" class="muted"></small>
-      </div>
-      <label class="chkline"><input id="chkDebug" type="checkbox"/>
-        <span>Baixar também os arquivos de conferência (<b>_DEBUG</b> e <b>_CASES_DEBUG</b>)</span></label>
-      <div id="queue" class="queue" style="margin-top:10px;display:none"></div>
-      <small class="muted" style="display:block;margin-top:8px">No modo 1 (automático), gere a prévia e exporte.
-        No modo 2, a <b>fila</b> (com <b>Exportar XLSX</b> e <b>Limpar fila</b>) fica na barra lateral, à esquerda.</small>
+    <!-- [Streamlit] a antiga etapa "5) Fila / Exportação" fica na barra lateral (prévia ou fila + Exportar XLSX +
+         arquivos de conferência). Os elementos abaixo só existem para o código original continuar funcionando. -->
+    <div style="display:none">
+      <button id="btnClearQueue" type="button">Limpar fila</button>
+      <button id="btnExportXlsx" type="button">Exportar XLSX</button>
+      <small id="expStatus"></small>
+      <input id="chkDebug" type="checkbox"/>
+      <div id="queue" class="queue"></div>
     </div>
+    <small class="muted" style="display:block;margin:4px 2px 0">A exportação fica na <b>barra lateral</b>, à esquerda:
+      no modo 1, a prévia; no modo 2, a fila.</small>
   </aside>
 
   <main id="main">
@@ -324,10 +338,56 @@
     return `${t.row_var || ''}|${cols}|${t.weight_var || ''}`;
   }
 
+  // ---------------- [Streamlit] etapas recolhíveis
+  function caixas(){ return Array.from(document.querySelectorAll('.panel > .box')); }
+  function atualizarResumos(){
+    const r = [
+      el('dataStatus').textContent || 'nenhum banco',
+      mode() === 'batch' ? 'Automático' : '1 por vez + fila',
+      `${__selectedWeight ? dispVar(__selectedWeight) : 'sem peso'} · ${el('pctMode').selectedOptions[0]?.text || ''} · ${el('decimals').value} casa(s)`,
+      el('selBadge').textContent,
+      (()=>{ const n = Object.keys(__dispMap || {}).filter(v => {
+               const pad = ((__labels[v] || '').trim()) || v; return __dispMap[v] && __dispMap[v] !== pad; }).length;
+             return n ? `${n} renomeada(s)` : 'nomes originais'; })(),
+    ];
+    r.forEach((t, i)=>{ const e = el('resumo' + i); if(e) e.textContent = t; });
+    const todas = caixas().every(c => c.classList.contains('fechado'));
+    el('btnEtapas').textContent = todas ? 'Abrir etapas' : 'Recolher etapas';
+  }
+  function etapasFechadas(){ return caixas().map((c, i) => c.classList.contains('fechado') ? i : -1).filter(i => i >= 0); }
+  function definirFechadas(lista){
+    const f = new Set(lista || []);
+    caixas().forEach((c, i) => c.classList.toggle('fechado', f.has(i)));
+    atualizarResumos();
+  }
+  caixas().forEach(c => {
+    c.querySelector(':scope > h2').addEventListener('click', ()=>{
+      c.classList.toggle('fechado'); atualizarResumos(); salvarUi();
+    });
+  });
+  el('btnEtapas').addEventListener('click', ()=>{
+    const todas = caixas().every(c => c.classList.contains('fechado'));
+    definirFechadas(todas ? [] : caixas().map((_, i) => i));
+    salvarUi();
+  });
+
+  // [Streamlit] a barra lateral tirou uma tabela da prévia (modo 1)
+  window.__removerDaPrevia = function(sigJson){
+    let sig = '';
+    try{ sig = JSON.parse(sigJson); }catch(_){ return; }
+    if(!__preview || !__preview.ok) return;
+    __preview.tables = (__preview.tables || []).filter(t => sigTabela(t) !== sig);
+    el('meta').textContent = `${__preview.tables.length} tabela(s)`;
+    if(__preview.tables.length) renderPreview(__preview);
+    else { __preview = null; el('wrap').innerHTML = '<div class="muted">Prévia vazia. Gere de novo.</div>'; }
+    salvarUi();
+  };
+
   // ---------------- [Streamlit] estado da tela guardado no Python
   let __restaurando = false;
   let __timerUi = null;
   function salvarUi(){
+    atualizarResumos();
     if(__restaurando || !__vars.length) return;
     clearTimeout(__timerUi);
     __timerUi = setTimeout(()=>{
@@ -336,6 +396,7 @@
         weight: __selectedWeight, pctMode: el('pctMode').value, decimals: el('decimals').value,
         debug: !!el('chkDebug').checked, preview: (__preview && __preview.ok) ? __preview : null,
         recolhido: document.querySelector('.app').classList.contains('recolhido'),
+        fechadas: etapasFechadas(),
       };
       window.QtBridge?.saveUiState?.(JSON.stringify(estado));
     }, 900);
@@ -365,6 +426,7 @@
         renderPreview(__preview);
       }
       if(e.recolhido && typeof definirPainel === 'function') definirPainel(true);
+      if(Array.isArray(e.fechadas)) definirFechadas(e.fechadas);
     } finally {
       __restaurando = false;
     }

@@ -8,6 +8,7 @@ import os
 import streamlit as st
 
 from analises.base_reduzida import processador_base_reduzida
+from analises.exclusao_colunas import modulo_exclusao_colunas
 from analises.base_multiplas import modulo_base_multiplas
 from analises.legendas import modulo_legendas
 from analises.relatorio_automatizado import modulo_relatorio_automatizado
@@ -276,6 +277,7 @@ MENU = (
     "[Antigo] Mapas de Correspondência - V1",
     "[Atual] Mapas de Correspondência - V2",
     "Processador de Base Reduzida",
+    "Exclusão de Colunas por Base",
     "Exclusões",
     "Base nas Múltiplas",
     "Legendas",
@@ -311,6 +313,10 @@ def main():
     # estes módulos têm upload próprio e não dependem do arquivo carregado abaixo
     if analise == "Processador de Base Reduzida":
         processador_base_reduzida()
+        return
+
+    if analise == "Exclusão de Colunas por Base":
+        modulo_exclusao_colunas()
         return
 
     if analise == "Exclusões":

@@ -81,6 +81,8 @@ SECOES: List[Dict[str, Any]] = [
         "cards": [
             {"titulo": "Processador de Base Reduzida", "sub": "Base reduzida a partir do banco",
              "icone": "reduzir", "alvo": "Processador de Base Reduzida"},
+            {"titulo": "Exclusão de Colunas", "sub": "Apaga colunas por Base / Base reduzida",
+             "icone": "tabela", "alvo": "Exclusão de Colunas por Base"},
             {"titulo": "Exclusões", "sub": "Casos a excluir do banco", "icone": "lixeira", "alvo": "Exclusões"},
             {"titulo": "Base nas Múltiplas", "sub": "Bases das perguntas de múltipla resposta", "icone": "tabela",
              "alvo": "Base nas Múltiplas"},

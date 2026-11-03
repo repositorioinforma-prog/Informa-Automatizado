@@ -11,7 +11,8 @@ from unittest import mock
 import openpyxl
 from openpyxl import Workbook
 
-from tests.test_exclusao_colunas import tabela
+from tests.test_exclusao_colunas import tabela, NOTA
+from core.relatorio_automatizado_math import aplicar_codigo_08
 from core.exclusao_colunas_math import TIPO_BASE_REDUZIDA
 
 
@@ -177,6 +178,49 @@ class TestTelaExclusaoColunas(unittest.TestCase):
         self.st.valores = {"ec_limite_0": 15}
         self._rodar()
         self.assertTrue(any(t == "warning" and "mudaram" in m for t, m in self.st.msgs))
+
+    def _arquivo_com_notas(self):
+        def montar(ws):
+            tabela(ws, topo=1, bases=(80, 10, 60, 28), titulo="Titulo: T1")    # 28* sobra -> nota fica
+            tabela(ws, topo=9, bases=(80, 12, 60, 40), titulo="Titulo: T2")    # só 12* -> nota sai
+            tabela(ws, topo=17, bases=(80, 70, 60, 40), titulo="Titulo: T3")   # sem base pequena
+            aplicar_codigo_08(ws)
+        return _Arquivo("com_notas.xlsx", _xlsx(montar))
+
+    @staticmethod
+    def _notas(dados):
+        ws = openpyxl.load_workbook(io.BytesIO(dados)).active
+        return [r for r in range(1, ws.max_row + 1) if ws.cell(row=r, column=1).value == NOTA]
+
+    def test_revisao_de_notas_previa_e_resultado(self):
+        self.st.arquivo = self._arquivo_com_notas()
+        self._rodar()
+        self.assertEqual(self.st.metricas["Notas de base pequena a remover"], 1)
+        self.assertEqual(self.st.tabelas[-1]["Tabela"].tolist(), ["T2"])   # tabela de notas na prévia
+
+        self.st.apertados = {"ec_aplicar"}
+        self._rodar()
+        self.assertEqual(len(self._notas(self.st.downloads[-1][1])), 1)    # 2 notas antes -> 1 depois
+        self.assertTrue(any(t == "success" and "1 removida(s), 1 mantida(s)" in m for t, m in self.st.msgs))
+
+    def test_revisao_de_notas_pode_ser_desligada(self):
+        self.st.arquivo = self._arquivo_com_notas()
+        self.st.valores = {"ec_revisar_notas": False}
+        self.st.apertados = {"ec_aplicar"}
+        self._rodar()
+        self.assertEqual(self.st.metricas["Notas de base pequena a remover"], 0)
+        self.assertEqual(len(self._notas(self.st.downloads[-1][1])), 2)    # notas intactas
+
+    def test_so_nota_orfa_ainda_permite_aplicar(self):
+        def montar(ws):
+            L = tabela(ws, bases=(80, 70, 60, 40))
+            ws.cell(row=L["p"] + 1, column=1, value=NOTA)
+        self.st.arquivo = _Arquivo("orfa.xlsx", _xlsx(montar))
+        self.st.apertados = {"ec_aplicar"}
+        self._rodar()
+        self.assertEqual(self.st.metricas["Colunas a excluir"], 0)
+        self.assertEqual(self._notas(self.st.downloads[-1][1]), [])
+
 
     def test_arquivo_sem_base(self):
         self.st.arquivo = _Arquivo("x.xlsx", _xlsx(lambda ws: ws.append(["a", 1, 2])))

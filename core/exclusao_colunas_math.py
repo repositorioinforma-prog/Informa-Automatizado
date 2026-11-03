@@ -33,6 +33,14 @@ Como a formatação é preservada
   tabelas da aba apagam exatamente as mesmas colunas e não há outro conteúdo
   na aba); senão ficam como estão, pois as tabelas dividem as mesmas colunas.
 
+Etapa final: revisão da nota "*Base pequena para análise estatística"
+---------------------------------------------------------------------
+Com as colunas já apagadas, o arquivo é relido e cada tabela é conferida de
+cima para baixo: se sobrou alguma base marcada com "*" (código 08), a nota
+fica; se não sobrou nenhuma, a linha da nota daquela tabela é removida (com
+mesclagens, alturas e quebras de página de baixo deslocadas junto). Tabela
+com "*" e sem nota só gera aviso — nada é inserido.
+
 A coluna A (rótulos) nunca é apagada. A coluna B (Total) fica protegida por
 padrão.
 """
@@ -40,6 +48,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from bisect import bisect_left, bisect_right
 from copy import copy
 from dataclasses import dataclass
 
@@ -151,6 +160,14 @@ def tipo_de_base(valor_coluna_a):
     return None
 
 
+def eh_nota_base_pequena(valor_coluna_a) -> bool:
+    """A célula é a nota '*Base pequena para análise estatística' (código 08)?
+    Tolerante a acento, caixa, espaços e ao que vier depois de '*Base pequena'."""
+    if valor_coluna_a is None:
+        return False
+    return _chave(valor_coluna_a).startswith("*base pequena")
+
+
 # ---------------------------------------------------------------------------
 # 1) Leitura: tabelas, cabeçalhos e linhas de base
 # ---------------------------------------------------------------------------
@@ -212,6 +229,7 @@ def escanear_planilha(ws) -> dict:
 
     tabelas = []
     linhas_fora = 0
+    notas_soltas = []   # notas de base pequena fora de qualquer tabela (ex.: separadas por linha em branco)
     desconhecidos = []
     n_base = n_base_reduzida = 0
 
@@ -234,8 +252,10 @@ def escanear_planilha(ws) -> dict:
                 a = _texto(grade[rr - 1][0])
                 if a and _chave(a).startswith("base") and a not in desconhecidos:
                     desconhecidos.append(a)
+        notas_bloco = [rr for rr in range(ini, fim + 1) if eh_nota_base_pequena(grade[rr - 1][0])]
         if not bases:
             linhas_fora += fim - ini + 1
+            notas_soltas.extend(notas_bloco)
             continue
 
         # divide o trecho em tabelas: um título novo entre duas bases abre outra
@@ -294,7 +314,7 @@ def escanear_planilha(ws) -> dict:
 
             bases_info = []
             for rr, tipo in bases_t:
-                valores, vazias, formulas = {}, [], 0
+                valores, vazias, formulas, asteriscos = {}, [], 0, []
                 for c in range(2, largura + 1):
                     bruto = grade[rr - 1][c - 1]
                     if bruto is None or (isinstance(bruto, str) and not bruto.strip()):
@@ -303,9 +323,12 @@ def escanear_planilha(ws) -> dict:
                         continue
                     if isinstance(bruto, str) and bruto.lstrip().startswith("="):
                         formulas += 1
+                    if isinstance(bruto, str) and "*" in bruto:
+                        asteriscos.append(c)   # base pequena já marcada pelo código 08 ("18*")
                     valores[c] = numero_da_base(bruto)
                 bases_info.append({
                     "linha": rr, "tipo": tipo, "valores": valores, "vazias": vazias, "formulas": formulas,
+                    "asteriscos": asteriscos,
                 })
                 if tipo == TIPO_BASE:
                     n_base += 1
@@ -316,10 +339,11 @@ def escanear_planilha(ws) -> dict:
                 "aba": ws.title, "titulo": titulo, "linha_titulo": linha_titulo,
                 "linha_ini": t_ini, "linha_fim": t_fim, "largura": largura,
                 "colunas": colunas, "bases": bases_info,
+                "notas": [rr for rr in notas_bloco if t_ini <= rr <= t_fim],
             })
 
     return {
-        "aba": ws.title, "tabelas": tabelas, "linhas_fora": linhas_fora,
+        "aba": ws.title, "tabelas": tabelas, "linhas_fora": linhas_fora, "notas_soltas": notas_soltas,
         "n_base": n_base, "n_base_reduzida": n_base_reduzida,
         "rotulos_base_desconhecidos": desconhecidos[:10],
     }
@@ -351,6 +375,138 @@ def listar_grupos(scans) -> list:
                 if g and _chave(g) not in vistos:
                     vistos[_chave(g)] = g
     return list(vistos.values())
+
+
+# ---------------------------------------------------------------------------
+# Revisão das notas "*Base pequena para análise estatística"
+# ---------------------------------------------------------------------------
+def planejar_revisao_notas(scan, colunas_excluidas=None) -> dict:
+    """
+    Decide, tabela a tabela (de cima para baixo), o que fazer com a nota
+    '*Base pequena para análise estatística':
+      - sobrou alguma base marcada com '*'  -> a nota fica;
+      - nenhuma base marcada com '*'        -> a nota da tabela é removida.
+
+    A nota pertence à tabela em cujas linhas ela está; nota separada da
+    tabela por linha em branco pertence à tabela anterior mais próxima; nota
+    antes da primeira tabela não é tocada.
+
+    colunas_excluidas : {linha_ini da tabela: {colunas}} — simula as colunas que
+        ainda vão sair (usado na prévia). Sem isso, olha o arquivo como está.
+
+    Devolve {"remover": [{"linha", "titulo", "linha_titulo"}], "mantidas": int,
+             "sem_nota": [tabelas com base '*' mas sem a nota]} — `sem_nota` é só
+    aviso: nada é inserido.
+    """
+    colunas_excluidas = colunas_excluidas or {}
+    tabelas = scan["tabelas"]
+    notas = [list(t["notas"]) for t in tabelas]
+    for linha in scan.get("notas_soltas", []):
+        anteriores = [i for i, t in enumerate(tabelas) if t["linha_fim"] < linha]
+        if anteriores:
+            notas[max(anteriores, key=lambda i: tabelas[i]["linha_fim"])].append(linha)
+
+    remover, mantidas, sem_nota = [], 0, []
+    for t, notas_t in zip(tabelas, notas):
+        saem = set(colunas_excluidas.get(t["linha_ini"], ()))
+        tem_asterisco = any(c not in saem for b in t["bases"] for c in b["asteriscos"])
+        if tem_asterisco:
+            mantidas += len(notas_t)
+            if not notas_t:
+                sem_nota.append(t)
+        else:
+            remover.extend(
+                {"linha": n, "titulo": t["titulo"], "linha_titulo": t["linha_titulo"] or t["linha_ini"]}
+                for n in sorted(notas_t)
+            )
+    return {"remover": remover, "mantidas": mantidas, "sem_nota": sem_nota}
+
+
+def _remover_linhas_em_lote(ws, linhas):
+    """
+    Remove várias linhas inteiras de uma vez (uma única passada pela aba — remover
+    uma a uma reprocessa a aba inteira a cada linha e fica lento em relatórios grandes).
+
+    Desloca para cima o que está abaixo: células (valor + estilo), mesclagens,
+    alturas de linha e quebras de página. Mesclagem que passa por uma linha
+    removida é desfeita. Quebra de página que estava logo depois de uma linha
+    removida passa a ficar depois da linha de cima (a página continua acabando
+    onde acabava).
+    """
+    apagadas = sorted(set(linhas))
+    if not apagadas:
+        return
+    conjunto = set(apagadas)
+
+    def novo_indice(r):          # r não removida: quantas linhas removidas vinham antes dela
+        return r - bisect_left(apagadas, r)
+
+    # 1) mesclagens: desfaz as que estão na/abaixo da 1ª linha removida; as que não tocam
+    #    nenhuma linha removida voltam, deslocadas, no passo 4
+    refazer = []
+    for rng in list(ws.merged_cells.ranges):
+        if rng.max_row < apagadas[0]:
+            continue
+        i = bisect_left(apagadas, rng.min_row)
+        toca = i < len(apagadas) and apagadas[i] <= rng.max_row
+        _desfazer_mesclagem_rapido(ws, rng)
+        if not toca:
+            refazer.append((rng.min_row, rng.min_col, rng.max_row, rng.max_col))
+
+    # 2) células
+    deslocadas = {}
+    for (r, c), cel in ws._cells.items():
+        if r in conjunto:
+            continue
+        nr = novo_indice(r)
+        if nr != r:
+            cel.row = nr
+        deslocadas[(nr, c)] = cel
+    ws._cells.clear()
+    ws._cells.update(deslocadas)
+
+    # 3) alturas de linha
+    dims = ws.row_dimensions
+    atuais = list(dims.items())
+    dims.clear()
+    for idx, dim in atuais:
+        if idx in conjunto:
+            continue
+        nr = novo_indice(idx)
+        dim.index = nr
+        dims[nr] = dim
+
+    # 4) mesclagens de volta, nas linhas novas
+    for min_row, min_col, max_row, max_col in refazer:
+        _remesclar_rapido(ws, min_row=novo_indice(min_row), min_col=min_col,
+                          max_row=novo_indice(max_row), max_col=max_col)
+
+    # 5) quebras de página (ids em ordem crescente e sem repetição, senão o Excel descarta a lista)
+    novas, vistas = [], set()
+    for quebra in ws.row_breaks.brk:
+        nid = quebra.id - bisect_right(apagadas, quebra.id)
+        if nid < 1 or nid in vistas:
+            continue
+        quebra.id = nid
+        vistas.add(nid)
+        novas.append(quebra)
+    ws.row_breaks.brk = sorted(novas, key=lambda b: b.id)
+
+
+def revisar_notas_base_pequena(ws) -> dict:
+    """
+    Revisa o arquivo COMO ESTÁ (rele a aba): em cada tabela, de cima para baixo,
+    mantém a nota '*Base pequena para análise estatística' se houver base
+    marcada com '*' e remove a linha da nota se não houver (ver
+    `planejar_revisao_notas`). As linhas saem todas de uma vez.
+    """
+    revisao = planejar_revisao_notas(escanear_planilha(ws))
+    _remover_linhas_em_lote(ws, [item["linha"] for item in revisao["remover"]])
+    return {
+        "notas_removidas": len(revisao["remover"]),
+        "notas_mantidas": revisao["mantidas"],
+        "tabelas_com_asterisco_sem_nota": [t["titulo"] for t in revisao["sem_nota"]],
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -407,12 +563,18 @@ def planejar_exclusoes(scan, regras, proteger_total=True, vazias_como_zero=False
         bool(itens) and scan["linhas_fora"] == 0 and len(conjuntos) == 1 and bool(next(iter(conjuntos)))
     )
 
+    # prévia da revisão das notas de base pequena, já contando as colunas que vão sair
+    revisao_notas = planejar_revisao_notas(
+        scan, {i["tabela"]["linha_ini"]: set(i["excluir"]) for i in itens if i["excluir"]},
+    )
+
     return {
         "aba": scan["aba"], "itens": itens,
         "total_colunas": sum(len(i["excluir"]) for i in itens),
         "tabelas_afetadas": len(afetados),
         "tabelas_sem_segmentos": sem_segmentos,
         "larguras_deslocaveis": larguras_deslocaveis,
+        "revisao_notas": revisao_notas,
     }
 
 
@@ -562,45 +724,58 @@ def _deslocar_larguras(ws, excluir, max_col):
             dims[get_column_letter(c)] = clonar(cd, c)
 
 
-def aplicar_exclusoes(ws, plano, ajustar_larguras=True) -> dict:
+def aplicar_exclusoes(ws, plano, ajustar_larguras=True, revisar_notas=True) -> dict:
     """
-    Executa o plano (de `planejar_exclusoes`) na aba `ws`. Devolve
-      {"colunas_excluidas", "tabelas_afetadas", "larguras_ajustadas", "avisos"}.
+    Executa o plano (de `planejar_exclusoes`) na aba `ws` e, por último, revisa
+    as notas '*Base pequena para análise estatística' (`revisar_notas`). Devolve
+      {"colunas_excluidas", "tabelas_afetadas", "larguras_ajustadas",
+       "notas_removidas", "notas_mantidas", "tabelas_com_asterisco_sem_nota", "avisos"}.
     """
-    resumo = {"colunas_excluidas": 0, "tabelas_afetadas": 0, "larguras_ajustadas": False, "avisos": []}
+    resumo = {
+        "colunas_excluidas": 0, "tabelas_afetadas": 0, "larguras_ajustadas": False,
+        "notas_removidas": 0, "notas_mantidas": 0, "tabelas_com_asterisco_sem_nota": [],
+        "avisos": [],
+    }
     itens = [i for i in plano["itens"] if i["excluir"]]
-    if not itens:
-        return resumo
 
-    max_col = ws.max_column
-    formulas = 0
-    for item in itens:
-        t = item["tabela"]
-        formulas += _excluir_colunas_na_faixa(
-            ws, t["linha_ini"], t["linha_fim"], sorted(item["excluir"]), max_col, t["largura"],
-        )
-        resumo["colunas_excluidas"] += len(item["excluir"])
-        resumo["tabelas_afetadas"] += 1
+    if itens:
+        max_col = ws.max_column
+        formulas = 0
+        for item in itens:
+            t = item["tabela"]
+            formulas += _excluir_colunas_na_faixa(
+                ws, t["linha_ini"], t["linha_fim"], sorted(item["excluir"]), max_col, t["largura"],
+            )
+            resumo["colunas_excluidas"] += len(item["excluir"])
+            resumo["tabelas_afetadas"] += 1
 
-    if ajustar_larguras and plano["larguras_deslocaveis"]:
-        _deslocar_larguras(ws, itens[0]["excluir"], max_col)
-        resumo["larguras_ajustadas"] = True
+        if ajustar_larguras and plano["larguras_deslocaveis"]:
+            _deslocar_larguras(ws, itens[0]["excluir"], max_col)
+            resumo["larguras_ajustadas"] = True
 
-    if formulas:
-        resumo["avisos"].append(
-            f"{formulas} célula(s) com fórmula foram deslocadas sem reescrever as referências — confira."
-        )
-    if len(ws.conditional_formatting):
-        resumo["avisos"].append("A aba tem formatação condicional, que não é deslocada junto com as colunas.")
-    if ws.data_validations is not None and ws.data_validations.dataValidation:
-        resumo["avisos"].append("A aba tem validação de dados, que não é deslocada junto com as colunas.")
+        if formulas:
+            resumo["avisos"].append(
+                f"{formulas} célula(s) com fórmula foram deslocadas sem reescrever as referências — confira."
+            )
+
+    # etapa final: com as colunas já apagadas, relê o arquivo e confere as notas de base pequena
+    if revisar_notas:
+        resumo.update(revisar_notas_base_pequena(ws))
+
+    if itens or resumo["notas_removidas"]:
+        if len(ws.conditional_formatting):
+            resumo["avisos"].append(
+                "A aba tem formatação condicional, que não é deslocada junto com as colunas/linhas apagadas.")
+        if ws.data_validations is not None and ws.data_validations.dataValidation:
+            resumo["avisos"].append(
+                "A aba tem validação de dados, que não é deslocada junto com as colunas/linhas apagadas.")
     return resumo
 
 
 def excluir_colunas_por_regras(ws, regras, proteger_total=True, vazias_como_zero=False,
-                               ajustar_larguras=True) -> dict:
+                               ajustar_larguras=True, revisar_notas=True) -> dict:
     """Atalho: escaneia, planeja e aplica numa chamada (scripts e testes)."""
     plano = planejar_exclusoes(escanear_planilha(ws), regras, proteger_total, vazias_como_zero)
-    resumo = aplicar_exclusoes(ws, plano, ajustar_larguras)
+    resumo = aplicar_exclusoes(ws, plano, ajustar_larguras, revisar_notas)
     resumo["plano"] = plano
     return resumo

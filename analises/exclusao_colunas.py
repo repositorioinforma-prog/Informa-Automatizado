@@ -12,7 +12,10 @@ restringe a regra a certos grupos de segmento (ex.: só "Região"). Dá para
 somar várias regras; a coluna sai se QUALQUER uma pegar.
 
 A tela mostra, antes de apagar, exatamente quais colunas de quais tabelas
-vão sair. Toda a lógica mora em core/exclusao_colunas_math.py.
+vão sair. Depois de apagar, uma etapa final revisa o arquivo: tabela que ainda
+tem base marcada com "*" mantém a nota "*Base pequena para análise
+estatística"; tabela sem nenhuma base com "*" tem a linha da nota removida.
+Toda a lógica mora em core/exclusao_colunas_math.py.
 
 Não depende do `dados` carregado no início do app: tem upload próprio.
 Chaves de session_state com prefixo `ec_`.
@@ -193,6 +196,11 @@ def modulo_exclusao_colunas():
             "Tratar base vazia como 0", value=False, key="ec_vazias_zero",
             help="Por padrão, coluna com a célula de base vazia é mantida (não dá para saber o valor).",
         )
+        revisar_notas = st.checkbox(
+            "Revisar a nota '*Base pequena para análise estatística' no final", value=True, key="ec_revisar_notas",
+            help="Depois de apagar as colunas, confere cada tabela: se sobrou alguma base marcada com '*', a nota "
+                 "fica; se não sobrou nenhuma, a linha da nota daquela tabela é removida.",
+        )
         ajustar_larguras = st.checkbox(
             "Acompanhar as larguras das colunas", value=True, key="ec_ajustar_larguras",
             help="Só é feito quando todas as tabelas da aba perdem exatamente as mesmas colunas e não há "
@@ -206,10 +214,20 @@ def modulo_exclusao_colunas():
     tabelas_analisadas = sum(len(scans[a]["tabelas"]) for a in abas)
 
     st.subheader("O que vai ser apagado")
-    m1, m2, m3 = st.columns(3)
+    notas_a_remover = [
+        {"Aba": a, "Tabela": i["titulo"], "Linha do título": i["linha_titulo"], "Linha da nota": i["linha"]}
+        for a in abas for i in planos[a]["revisao_notas"]["remover"]
+    ] if revisar_notas else []
+    notas_mantidas = sum(planos[a]["revisao_notas"]["mantidas"] for a in abas) if revisar_notas else 0
+    tabelas_com_asterisco_sem_nota = [
+        t for a in abas for t in planos[a]["revisao_notas"]["sem_nota"]
+    ] if revisar_notas else []
+
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Colunas a excluir", total_colunas)
     m2.metric("Tabelas afetadas", tabelas_afetadas)
     m3.metric("Tabelas analisadas", tabelas_analisadas)
+    m4.metric("Notas de base pequena a remover", len(notas_a_remover))
 
     formulas_na_base = sum(b["formulas"] for a in abas for t in scans[a]["tabelas"] for b in t["bases"])
     if formulas_na_base:
@@ -226,20 +244,37 @@ def modulo_exclusao_colunas():
             + (" ..." if len(sem_segmentos) > 5 else "")
         )
 
-    if total_colunas == 0:
-        st.success("Nenhuma coluna atende às regras — o arquivo ficaria igual ao original.")
+    if tabelas_com_asterisco_sem_nota:
+        exemplos = "; ".join(t["titulo"] for t in tabelas_com_asterisco_sem_nota[:5])
+        st.info(
+            f"{len(tabelas_com_asterisco_sem_nota)} tabela(s) têm base marcada com '*' mas não têm a nota "
+            f"'*Base pequena para análise estatística' (nada é inserido): {exemplos}"
+            + (" ..." if len(tabelas_com_asterisco_sem_nota) > 5 else "")
+        )
+
+    if total_colunas == 0 and not notas_a_remover:
+        st.success("Nenhuma coluna atende às regras e nenhuma nota precisa sair — o arquivo ficaria igual ao original.")
         return
 
-    linhas = [l for a in abas for l in linhas_do_plano(planos[a])]
-    st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
+    if total_colunas:
+        linhas = [l for a in abas for l in linhas_do_plano(planos[a])]
+        st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
+
+    if notas_a_remover:
+        st.markdown(
+            f"**Notas '*Base pequena para análise estatística' que saem** — depois das exclusões, essas tabelas "
+            f"ficam sem nenhuma base marcada com '*' ({notas_mantidas} nota(s) continuam, pois ainda há base com '*'):"
+        )
+        st.dataframe(pd.DataFrame(notas_a_remover), use_container_width=True, hide_index=True)
 
     # ------------------------------------------------------------------ aplicar
-    assinatura_plano = repr((tuple(abas), tuple(regras), proteger_total, vazias_como_zero, ajustar_larguras))
+    assinatura_plano = repr((tuple(abas), tuple(regras), proteger_total, vazias_como_zero, ajustar_larguras,
+                             revisar_notas))
 
     if st.button("Aplicar exclusões e gerar arquivo", key="ec_aplicar"):
         with st.spinner("Apagando as colunas..."):
             wb = openpyxl.load_workbook(io.BytesIO(dados), rich_text=True)
-            resumos = {a: aplicar_exclusoes(wb[a], planos[a], ajustar_larguras) for a in abas}
+            resumos = {a: aplicar_exclusoes(wb[a], planos[a], ajustar_larguras, revisar_notas) for a in abas}
             saida = io.BytesIO()
             wb.save(saida)
         st.session_state["ec_resultado"] = {
@@ -262,10 +297,19 @@ def modulo_exclusao_colunas():
 
     n_excl = sum(r["colunas_excluidas"] for r in resultado["resumos"].values())
     n_tab = sum(r["tabelas_afetadas"] for r in resultado["resumos"].values())
-    st.success(f"Pronto! {n_excl} coluna(s) excluída(s) em {n_tab} tabela(s).")
+    n_notas = sum(r["notas_removidas"] for r in resultado["resumos"].values())
+    n_notas_ficaram = sum(r["notas_mantidas"] for r in resultado["resumos"].values())
+    texto = f"Pronto! {n_excl} coluna(s) excluída(s) em {n_tab} tabela(s)."
+    if n_notas or n_notas_ficaram:
+        texto += (f" Notas '*Base pequena para análise estatística': {n_notas} removida(s), "
+                  f"{n_notas_ficaram} mantida(s) (tabelas que ainda têm base com '*').")
+    st.success(texto)
     for aba, r in resultado["resumos"].items():
         if r["larguras_ajustadas"]:
             st.caption(f"Aba '{aba}': larguras das colunas acompanharam o deslocamento.")
+        if r["tabelas_com_asterisco_sem_nota"]:
+            st.info(f"Aba '{aba}': tabela(s) com base '*' e sem a nota (nada foi inserido): "
+                    + "; ".join(r["tabelas_com_asterisco_sem_nota"][:5]))
         for aviso in r["avisos"]:
             st.warning(f"Aba '{aba}': {aviso}")
 

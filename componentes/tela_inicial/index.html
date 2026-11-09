@@ -22,18 +22,18 @@
     --lima:#b4e26b; --lima-bg:rgba(164,214,86,.14);
   }
   *{box-sizing:border-box}
-  html,body{margin:0;padding:0;background:transparent;color:var(--txt);
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;background:var(--bg);color:var(--txt);
     font-family:"Source Sans Pro","Source Sans 3",system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
   button{font:inherit;color:inherit}
 
-  .app{position:relative;overflow:hidden;border:1px solid var(--linha);border-radius:22px;background:var(--bg);
-       box-shadow:0 18px 44px rgba(10,15,25,.28);min-height:760px;display:flex;flex-direction:column}
+  /* tela cheia: o app (analises/tela_inicial.py + app.py) estica o iframe para a janela inteira */
+  .app{position:relative;overflow:hidden;background:var(--bg);height:100vh;display:flex;flex-direction:column}
   .app::before{content:"";position:absolute;inset:0;pointer-events:none;
     background:radial-gradient(520px 260px at 0% 0%,rgba(164,214,86,.10),transparent 70%),
                radial-gradient(620px 320px at 100% 100%,var(--glow,rgba(96,165,250,.10)),transparent 70%)}
 
   /* ---------- topo ---------- */
-  .topo{position:relative;display:flex;align-items:center;gap:22px;padding:20px 30px;border-bottom:1px solid var(--linha);
+  .topo{position:relative;flex:none;display:flex;align-items:center;gap:22px;padding:18px 34px;padding-right:var(--reserva-barra,190px);border-bottom:1px solid var(--linha);
         background:
           radial-gradient(circle,rgba(255,255,255,.06) 1px,transparent 1.6px) 0 0/14px 14px,
           linear-gradient(180deg,#18212e,#141c27)}
@@ -48,8 +48,8 @@
       padding:3px 6px;background:var(--bg2);color:var(--muted)}
 
   /* ---------- corpo ---------- */
-  .corpo{position:relative;display:grid;grid-template-columns:268px minmax(0,1fr);flex:1}
-  .menu{padding:22px 18px;background:linear-gradient(180deg,var(--nav),#161e2b);border-right:1px solid var(--linha);
+  .corpo{position:relative;display:grid;grid-template-columns:288px minmax(0,1fr);flex:1;min-height:0}
+  .menu{overflow-y:auto;padding:24px 18px;background:linear-gradient(180deg,var(--nav),#161e2b);border-right:1px solid var(--linha);
         display:flex;flex-direction:column;gap:6px}
   .menu .rotulo{font-size:11px;font-weight:800;letter-spacing:1.8px;color:var(--fraco);padding:0 12px 8px}
   .cat{position:relative;display:flex;align-items:center;gap:12px;width:100%;text-align:left;cursor:pointer;
@@ -68,7 +68,10 @@
   .cat.ativa .qtd{color:#fff;background:color-mix(in srgb,var(--c) 35%,transparent)}
   .menu .rodape{margin-top:auto;padding:14px 12px 0;font-size:12.5px;color:var(--fraco);line-height:1.45;border-top:1px dashed var(--linha)}
 
-  .painel{padding:30px 38px 26px;min-width:0;display:flex;flex-direction:column}
+  .painel{padding:34px clamp(28px,4vw,64px) 28px;min-width:0;min-height:0;overflow-y:auto;display:flex;flex-direction:column;
+          scrollbar-width:thin;scrollbar-color:var(--linha2) transparent}
+  .painel>*{width:100%;max-width:1280px;margin-left:auto;margin-right:auto;flex:none}
+  .recentes{flex-wrap:wrap;overflow:visible}
   .cab{display:flex;align-items:center;gap:16px}
   .cab .selo{flex:none;width:52px;height:52px;border-radius:15px;display:flex;align-items:center;justify-content:center;color:#fff;
              background:linear-gradient(135deg,var(--c),color-mix(in srgb,var(--c) 55%,#000));box-shadow:0 8px 20px color-mix(in srgb,var(--c) 30%,transparent)}
@@ -88,7 +91,7 @@
   .busca.cheia .limpar{display:inline-flex;align-items:center;justify-content:center}
   .busca.cheia kbd{display:none}
 
-  .recentes{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 6px;min-height:0}
+  .recentes{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 10px}
   .recentes:empty{display:none}
   .recentes .t{display:flex;align-items:center;gap:6px;color:var(--fraco);font-size:13px;font-weight:700;margin-right:2px}
   .recentes .t svg{width:15px;height:15px}
@@ -156,7 +159,9 @@
   @keyframes gira{to{transform:rotate(360deg)}}
   @media (prefers-reduced-motion:reduce){.item{animation:none}.item:hover,.chip:hover{transform:none}}
   @media (max-width:1020px){
-    .corpo{grid-template-columns:1fr}
+    .topo{padding-right:34px}
+    .corpo{grid-template-columns:1fr;overflow-y:auto}
+    .painel{overflow:visible}
     .menu{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--linha);padding:14px}
     .menu .rotulo,.menu .rodape{display:none}
     .cat{width:auto}.cat.ativa::before{display:none}
@@ -244,10 +249,7 @@
     for(var k in (extra||{})) m[k] = extra[k];
     window.parent.postMessage(m, "*");
   }
-  function ajustarAltura(){
-    var h = Math.ceil(document.documentElement.getBoundingClientRect().height) + 2;
-    if(Math.abs(h - ultimaAltura) > 1){ ultimaAltura = h; post("streamlit:setFrameHeight", {height:h}); }
-  }
+  function ajustarAltura(){ /* tela cheia: a altura é a da janela (CSS do app), não precisa medir */ }
 
   function todas(){
     var l = [];

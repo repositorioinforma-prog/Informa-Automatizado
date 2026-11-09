@@ -27,6 +27,7 @@ from analises.correlacao import modulo_correlacao
 from analises.analise_residual import modulo_analise_residual
 from analises.relatorio_analitico import modulo_relatorio_analitico
 from analises.controle import modulo_controle, pre_carregar_base_brasil
+from analises._tema_ferramenta import TEMA_ESCURO, cabecalho_ferramenta
 from analises.tela_inicial import CHAVE_MENU, INICIO, aplicar_clique_do_inicio, guardar_ferramenta, restaurar_ferramenta, tela_inicial, voltar_ao_inicio
 from analises.correspondencia_multipla import analise_correspondencia_multipla
 from analises.correspondencia_simples import analise_correspondencia
@@ -319,6 +320,23 @@ _CSS_SEM_BARRA = """
 </style>
 """
 
+# Tela inicial em tela cheia: fundo escuro na página inteira e o componente (iframe) cobrindo a janela.
+# O cabeçalho do Streamlit (menu ⋮) continua acessível, por cima, transparente.
+_CSS_INICIO = """
+<style>
+html, body, .stApp, [data-testid="stApp"], [data-testid="stAppViewContainer"],
+[data-testid="stMain"], section.main { background: #121923 !important; overflow: hidden !important; }
+[data-testid="stHeader"] { background: transparent !important; z-index: 1000 !important; }
+[data-testid="stHeader"] *, [data-testid="stToolbar"] * { color: #cbd5e1 !important; }
+[data-testid="stDecoration"], footer, [data-testid="stStatusWidget"] { display: none !important; }
+[data-testid="stMainBlockContainer"], .block-container, [data-testid="stAppViewBlockContainer"] {
+  padding: 0 !important; max-width: none !important; }
+[data-testid="stMain"] iframe, section.main iframe {
+  position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important;
+  border: 0 !important; z-index: 1 !important; }
+</style>
+"""
+
 
 # =========================
 # Função principal
@@ -337,11 +355,15 @@ def main():
         st.markdown(_CSS_SEM_BARRA, unsafe_allow_html=True)
 
     if analise == INICIO:
+        st.markdown(_CSS_INICIO, unsafe_allow_html=True)
         tela_inicial()
         return
 
-    mostrar_logo()
-    st.button("← Central de ferramentas", key="voltar_inicio", on_click=voltar_ao_inicio)
+    if analise in TEMA_ESCURO:   # ferramentas já repaginadas no visual da Central
+        cabecalho_ferramenta(analise, voltar=voltar_ao_inicio)
+    else:
+        mostrar_logo()
+        st.button("← Central de ferramentas", key="voltar_inicio", on_click=voltar_ao_inicio)
 
     # estes módulos têm upload próprio e não dependem do arquivo carregado abaixo
     if analise == "Processador de Base Reduzida":

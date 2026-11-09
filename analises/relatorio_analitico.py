@@ -10,6 +10,10 @@ Etapa 2 (pronta): configuração do estudo (local, datas, tempo médio, base, ca
 análises previstas) e geração do esqueleto da apresentação (.pptx) + manifesto
 (.json) para a IA preencher os dados nos lugares certos. Lógica em
 `core/esqueleto_apresentacao_math.py`.
+
+Etapa 3 (em andamento): preenche o esqueleto com os arquivos do estudo (um envio só, aceita zip ou
+arquivos soltos; cada arquivo é identificado pelo conteúdo). Já preenche o Perfil. Lógica em
+`core/preenchimento_math.py` e `core/perfil_math.py`.
 """
 from __future__ import annotations
 
@@ -35,6 +39,7 @@ from core.esqueleto_apresentacao_math import (
     sugerir_margem_erro,
     sugerir_objetivos,
 )
+from core.preenchimento_math import ARQUIVOS_ESPERADOS, classificar, preencher
 from core.verificador_relatorio_math import (
     ROTULO_TIPO,
     comparar,
@@ -64,12 +69,14 @@ def _verificar(uploaded, aba):
 
 
 def modulo_relatorio_analitico():
-    st.header("Relatório Analítico")
-    aba_conferencia, aba_esqueleto = st.tabs(["1. Conferir o relatório", "2. Esqueleto da apresentação"])
+    aba_conferencia, aba_esqueleto, aba_preencher = st.tabs(
+        ["1. Conferir o relatório", "2. Esqueleto da apresentação", "3. Preencher com os dados"])
     with aba_conferencia:
         _aba_conferencia()
     with aba_esqueleto:
         _aba_esqueleto()
+    with aba_preencher:
+        _aba_preencher()
 
 
 def _aba_conferencia():
@@ -368,3 +375,82 @@ def _aba_esqueleto():
         st.dataframe(pd.DataFrame([{"Nº": s["posicao"], "Módulo": s["modulo"], "Título": s["titulo"],
                                     "Status": s["status"], "Fonte esperada": s["fonte_esperada"] or ""}
                                    for s in man["slides"]]), use_container_width=True, hide_index=True)
+
+
+# ----------------------------------------------------------------------------- etapa 3
+_TIPOS_ENVIO = ["zip", "pptx", "xlsx", "xlsm", "xls"]
+
+
+def _aba_preencher():
+    st.write(
+        "Envie o **zip do estudo** (ou os arquivos soltos). O app identifica cada arquivo pelo conteúdo, "
+        "preenche o que reconhece e deixa o resto com o aviso **«Arquivo de X não enviado – conteúdo pendente»**. "
+        "Hoje preenche: **Perfil** (gênero, idade, renda e escolaridade)."
+    )
+    esq_sessao = st.session_state.get(_P + "esq")
+    enviados = st.file_uploader("Arquivos do estudo (zip, esqueleto .pptx, Perfil .xls/.xlsx)", type=_TIPOS_ENVIO,
+                                accept_multiple_files=True, key=_P + "preencher_upload")
+    try:
+        achados = classificar([(f.name, f.getvalue()) for f in (enviados or [])])
+    except Exception as exc:
+        st.exception(exc)
+        return
+    por_tipo = achados["por_tipo"]
+
+    esqueleto = por_tipo.get("esqueleto")
+    if esq_sessao and (esqueleto is None or st.checkbox(
+            f"Usar o esqueleto gerado na aba 2 ({esq_sessao['base']}.pptx) em vez do enviado", value=True,
+            key=_P + "usar_esq_sessao")):
+        esqueleto = (esq_sessao["base"] + ".pptx", esq_sessao["pptx"])
+
+    linhas = [{"Arquivo": "Esqueleto da apresentação", "Situação": "✅ " + esqueleto[0] if esqueleto
+               else "❌ faltou — gere na aba 2 ou envie o .pptx"}]
+    for tipo, rotulo in ARQUIVOS_ESPERADOS:
+        linhas.append({"Arquivo": rotulo, "Situação": "✅ " + por_tipo[tipo][0] if tipo in por_tipo
+                       else "❌ não enviado — o slide fica como «conteúdo pendente»"})
+    st.dataframe(pd.DataFrame(linhas), use_container_width=True, hide_index=True)
+    for tipo, nomes in achados["duplicados"].items():
+        st.warning(f"Há mais de um arquivo de {tipo}; usei o primeiro e ignorei: {', '.join(nomes)}.")
+    if achados["ignorados"]:
+        with st.expander(f"{len(achados['ignorados'])} arquivo(s) não usados nesta etapa"):
+            st.write(", ".join(achados["ignorados"]))
+
+    if esqueleto is None:
+        return
+    base_esperada = None
+    if esq_sessao:
+        base_esperada = (esq_sessao["manifesto"].get("configuracao") or {}).get("base")
+    if st.button("Preencher apresentação", type="primary", key=_P + "preencher"):
+        try:
+            with st.status("Preenchendo...", expanded=False) as status:
+                dados, conf = preencher(esqueleto[1], por_tipo, base_esperada=base_esperada)
+                status.update(label="Apresentação preenchida", state="complete")
+        except Exception as exc:
+            st.exception(exc)
+            return
+        nome = esqueleto[0].rsplit(".", 1)[0].replace("Esqueleto_", "")
+        st.session_state[_P + "preenchido"] = {
+            "pptx": dados, "conf": conf, "xlsx": conf.para_xlsx({"local": nome}), "nome": nome,
+        }
+
+    res = st.session_state.get(_P + "preenchido")
+    if not res:
+        return
+    conf = res["conf"]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Valores preenchidos", len(conf.linhas))
+    c2.metric("Pendências", len(conf.pendencias))
+    c3.metric("Divergências", len(conf.divergencias))
+    for item, a, b, obs in conf.divergencias:
+        st.error(f"**{item}:** {a} × {b}. {obs}")
+    for slide, item, motivo in conf.pendencias:
+        st.warning(f"Slide {slide} · {item}: {motivo}")
+    for aviso in conf.avisos:
+        st.info(aviso)
+    c1, c2 = st.columns(2)
+    c1.download_button("Baixar apresentação preenchida (PowerPoint)", data=res["pptx"],
+                       file_name=f"{res['nome']}_preenchido.pptx",
+                       mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                       key=_P + "dl_preenchido")
+    c2.download_button("Baixar conferência (Excel)", data=res["xlsx"], file_name=f"Conferencia_{res['nome']}.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key=_P + "dl_conf")

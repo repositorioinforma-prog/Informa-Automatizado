@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import html
 import io
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -63,10 +64,35 @@ def _cached_parse_sps(text: str):
     return parse_all_value_labels_sps(text)
 
 
-@st.cache_resource(show_spinner="Carregando Base Brasil interna...")
+# Base Brasil interna: ~1,5 MB de Excel (leva alguns segundos). Fica num cache do
+# próprio módulo (vale para todas as sessões) e é carregada em segundo plano assim
+# que o app sobe, para o Controle Geral abrir sem esperar.
+_GEO_LOCK = threading.Lock()
+_GEO_CACHE: dict = {}
+_PRE_INICIADA = False
+
+
 def _cached_geography_from_path(path_str: str):
-    path = Path(path_str)
-    return load_geography_excel(path, source_name=path.name)
+    with _GEO_LOCK:
+        if path_str not in _GEO_CACHE:
+            path = Path(path_str)
+            _GEO_CACHE[path_str] = load_geography_excel(path, source_name=path.name)
+        return _GEO_CACHE[path_str]
+
+
+def pre_carregar_base_brasil() -> None:
+    """Dispara a leitura da Base Brasil numa thread de fundo (idempotente, nunca levanta erro)."""
+    global _PRE_INICIADA
+    if _PRE_INICIADA:
+        return
+    _PRE_INICIADA = True
+
+    def _tarefa():
+        try:
+            _load_internal_geography()
+        except Exception:
+            pass  # na abertura do Controle Geral o erro aparece normalmente
+    threading.Thread(target=_tarefa, name="pre-carga-base-brasil", daemon=True).start()
 
 
 @st.cache_data(show_spinner="Carregando Base Brasil...")

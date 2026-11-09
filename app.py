@@ -1,7 +1,7 @@
 """
 Ponto de entrada do app. Responsável por: configuração da página,
 CSS/tema visual, logo, e o roteamento entre os módulos de análise
-(menu lateral). A lógica de cada análise mora em core/ e analises/.
+(tela inicial com cards). A lógica de cada análise mora em core/ e analises/.
 """
 import os
 
@@ -25,8 +25,9 @@ from analises.cruzamentos import modulo_cruzamentos
 from analises.mapa_calor import modulo_mapa_calor
 from analises.correlacao import modulo_correlacao
 from analises.analise_residual import modulo_analise_residual
-from analises.controle import modulo_controle
-from analises.tela_inicial import CHAVE_MENU, INICIO, aplicar_clique_do_inicio, tela_inicial
+from analises.relatorio_analitico import modulo_relatorio_analitico
+from analises.controle import modulo_controle, pre_carregar_base_brasil
+from analises.tela_inicial import CHAVE_MENU, INICIO, aplicar_clique_do_inicio, guardar_ferramenta, restaurar_ferramenta, tela_inicial, voltar_ao_inicio
 from analises.correspondencia_multipla import analise_correspondencia_multipla
 from analises.correspondencia_simples import analise_correspondencia
 from core.dados import carregar_dados
@@ -258,20 +259,23 @@ st.markdown(
 )
 
 # =========================
-# Logo
+# Logo (só nas ferramentas; a Central de ferramentas já traz a marca)
 # =========================
 LOGO_PATH = os.path.join(os.path.dirname(__file__), "assets", "logo.jpg")
 
-if os.path.exists(LOGO_PATH):
-    st.image(LOGO_PATH, width=300)
-else:
-    st.warning("Não foi possível carregar a logo do sistema (arquivo não encontrado).")
+
+def mostrar_logo():
+    if os.path.exists(LOGO_PATH):
+        st.image(LOGO_PATH, width=300)
+    else:
+        st.warning("Não foi possível carregar a logo do sistema (arquivo não encontrado).")
 
 
 # =========================
-# Menu lateral
+# Ferramentas (navegação pela tela inicial)
 # =========================
 # Os cards da tela inicial (analises/tela_inicial.py) apontam para estes nomes.
+# Não há mais seletor na barra lateral: a ferramenta atual fica em st.session_state[CHAVE_MENU].
 MENU = (
     INICIO,
     "[Antigo] Mapas de Correspondência - V1",
@@ -294,21 +298,50 @@ MENU = (
     "Mapa de Calor",
     "Matriz de Correlação",
     "Análise Residual (A.R)",
+    "Relatório Analítico",
     "Controle Geral",
 )
+
+
+# Ferramentas que ainda usam a barra lateral (pilha de exportação / parâmetros). Nas demais ela some.
+USAM_BARRA_LATERAL = {
+    "Cruzamentos (Tabelas)",
+    "Mapa de Calor",
+    "Análise Residual (A.R)",
+    "Gerador de Amostra",
+}
+
+_CSS_SEM_BARRA = """
+<style>
+[data-testid="stSidebar"],
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] { display: none !important; }
+</style>
+"""
 
 
 # =========================
 # Função principal
 # =========================
 def main():
-    # card clicado na tela inicial -> o menu lateral passa a apontar para a ferramenta
+    pre_carregar_base_brasil()  # lê a Base Brasil em segundo plano (só na 1ª execução)
+    # card clicado na tela inicial -> a ferramenta atual passa a ser a do card
     aplicar_clique_do_inicio(MENU)
-    analise = st.sidebar.selectbox("Escolha a análise", MENU, key=CHAVE_MENU)
+    restaurar_ferramenta(MENU)  # estado perdido (rerun/F5) -> volta à ferramenta guardada na URL
+    if st.session_state.get(CHAVE_MENU) not in MENU:
+        st.session_state[CHAVE_MENU] = INICIO
+    analise = st.session_state[CHAVE_MENU]
+    guardar_ferramenta(analise)
+
+    if analise not in USAM_BARRA_LATERAL:
+        st.markdown(_CSS_SEM_BARRA, unsafe_allow_html=True)
 
     if analise == INICIO:
         tela_inicial()
         return
+
+    mostrar_logo()
+    st.button("← Central de ferramentas", key="voltar_inicio", on_click=voltar_ao_inicio)
 
     # estes módulos têm upload próprio e não dependem do arquivo carregado abaixo
     if analise == "Processador de Base Reduzida":
@@ -382,6 +415,10 @@ def main():
 
     if analise == "Análise Residual (A.R)":
         modulo_analise_residual()
+        return
+
+    if analise == "Relatório Analítico":
+        modulo_relatorio_analitico()
         return
 
     if analise == "Controle Geral":

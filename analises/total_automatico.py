@@ -79,9 +79,13 @@ def _ir_para(etapa):
 
 
 def _reiniciar():
+    # a ferramenta aberta (navegação do app) nunca pode ser afetada pelo reinício
+    ferramenta = st.session_state.get("analise_menu")
     for chave in list(st.session_state.keys()):
         if chave.startswith("ta_"):
             del st.session_state[chave]
+    if ferramenta is not None:
+        st.session_state["analise_menu"] = ferramenta
     st.rerun()
 
 

@@ -602,6 +602,19 @@ def bloco_como_planilha(cz: Cruzamento, rot_pergunta: str, rot_cruz: str, limiar
     return ws
 
 
+def html_sobre_fundo_branco(html: str) -> str:
+    """Envolve o HTML da pré-visualização com fundo branco e texto preto fixos.
+
+    O HTML da planilha não define cor de fundo nem de texto; num iframe sobre o tema escuro da tela ele
+    ficava transparente (texto preto sobre fundo escuro, ilegível). Também tira o `max-height` interno
+    para só a moldura da tela rolar."""
+    return (
+        "<style>html,body{margin:0;padding:0;background:#ffffff !important;color:#000000 !important;"
+        "color-scheme:light}table{background:#ffffff;color:#000000}"
+        'div[style*="max-height"]{max-height:none !important}</style>' + html
+    )
+
+
 def montar_excel(
     resultado: ResultadoAnalise,
     labels: Sequence[LabelVar],

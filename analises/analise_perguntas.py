@@ -29,6 +29,7 @@ from core.analise_perguntas_math import (
     cruzamentos_padrao_presentes,
     ler_perguntas_total,
     bloco_como_planilha,
+    html_sobre_fundo_branco,
     montar_excel,
     resolver_labels,
     separar_total,
@@ -266,7 +267,7 @@ def modulo_analise_perguntas():
     )
     html, _trunc_l, _trunc_c = worksheet_para_html(ws, max_linhas=800)
     altura = int(min(760, max(240, ws.max_row * 21 + 50)))
-    st.components.v1.html(html, height=altura, scrolling=True)
+    st.components.v1.html(html_sobre_fundo_branco(html), height=altura, scrolling=True)
     st.caption(
         "Mesma tabela que vai para o Excel (mesclagens, cores do destaque e formatos). "
         "O arquivo baixado é a fonte da verdade."

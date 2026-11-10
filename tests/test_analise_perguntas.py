@@ -224,6 +224,13 @@ class TestExcel(unittest.TestCase):
         self.assertEqual(ap._texto_formatado(0.0641, "###0.0%"), "6,4%")
         self.assertEqual(ap._texto_formatado(-1.926, "###0.0"), "-1,9")
 
+    def test_previa_tem_fundo_branco_fixo(self):
+        h = ap.html_sobre_fundo_branco("<table><tr><td>x</td></tr></table>")
+        self.assertIn("background:#ffffff", h)
+        self.assertIn("color:#000000", h)
+        self.assertIn("max-height:none", h)
+        self.assertTrue(h.endswith("</table>"))
+
     def test_valor_ausente_fica_vazio_e_nao_zero(self):
         wb, _ = self._planilha()
         ws = wb[ap.NOME_ABA]

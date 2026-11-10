@@ -198,6 +198,32 @@ class TestExcel(unittest.TestCase):
         self.assertNotIn(4, pintadas)
         self.assertNotIn(7, pintadas)
 
+    def test_previa_da_tela_e_o_mesmo_bloco_do_excel(self):
+        res = ap.calcular_analise(_banco(), ["Q"], ["P1"], None, {"Q": {1.0: "Sim", 2.0: "Não"}, "P1": {1.0: "M", 2.0: "F"}})
+        cz = res.por_pergunta["Q"][0]
+        data = ap.montar_excel(res, [ap.LabelVar("Q", label_usada="Pergunta")], {"P1": "Sexo"}, peso=None, limiar_z=0.5,
+                               incluir_contagem=True)
+        no_excel = openpyxl.load_workbook(io.BytesIO(data))[ap.NOME_ABA]
+        ws = ap.bloco_como_planilha(cz, "Pergunta", "Sexo", 0.5, True)
+        self.assertEqual(ws.max_row, no_excel.max_row)
+        for r in range(1, ws.max_row + 1):
+            for c in range(1, ws.max_column + 1):
+                a, b = ws.cell(r, c), no_excel.cell(r, c)
+                if isinstance(a.value, float):
+                    self.assertAlmostEqual(a.value, b.value, places=9)
+                else:
+                    self.assertEqual(a.value, b.value)
+                self.assertEqual((a.fill.fgColor.rgb if a.fill.fill_type else None), (b.fill.fgColor.rgb if b.fill.fill_type else None))
+
+    def test_previa_formata_numeros_como_o_excel(self):
+        cz = ap.cruzar(_banco(), "Q", "P1", None)
+        ws = ap.bloco_como_planilha(cz, "P", "S", 1.85, True, como_texto=True)
+        self.assertEqual(ws["D4"].value, str(int(cz.contagem[0, 0])))                       # Count: inteiro
+        self.assertEqual(ws["D5"].value, f"{cz.pct_coluna[0, 0]:.1f}".replace(".", ",") + "%")  # % within
+        self.assertTrue(ws["D6"].value is None or "," in ws["D6"].value or ws["D6"].value.lstrip("-").isdigit())
+        self.assertEqual(ap._texto_formatado(0.0641, "###0.0%"), "6,4%")
+        self.assertEqual(ap._texto_formatado(-1.926, "###0.0"), "-1,9")
+
     def test_valor_ausente_fica_vazio_e_nao_zero(self):
         wb, _ = self._planilha()
         ws = wb[ap.NOME_ABA]

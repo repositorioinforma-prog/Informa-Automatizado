@@ -28,12 +28,13 @@ from core.analise_perguntas_math import (
     coluna_do_banco,
     cruzamentos_padrao_presentes,
     ler_perguntas_total,
+    bloco_como_planilha,
     montar_excel,
     resolver_labels,
     separar_total,
-    tabela_para_tela,
 )
 from core.analitica_dados import carregar_banco, eh_nome_de_peso
+from core.planilha_utils import worksheet_para_html
 from core.revisor_syntax_math import decode_sps
 
 _MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -70,7 +71,6 @@ def _carregar_arquivos(arq_sps, arq_sav):
 
 
 def modulo_analise_perguntas():
-    st.header("Análise das Perguntas")
     st.caption(
         "Cruza cada pergunta do Total pelas variáveis de cruzamento e baixa tudo em Excel, no layout "
         "da exportação do SPSS (% da coluna e resíduo ajustado, já pintado). A conta segue o CROSSTABS "
@@ -229,7 +229,12 @@ def modulo_analise_perguntas():
             )
         st.session_state["ap_resultado"] = res
         st.session_state["ap_excel"] = xlsx
-        st.session_state["ap_rot_cruz"] = rot_cruz
+        st.session_state["ap_snap"] = {   # o que foi usado no cálculo: a pré-visualização mostra o mesmo
+            "labels": {p: labels[p].label_usada for p in perguntas},
+            "rot_cruz": rot_cruz,
+            "limiar": float(limiar),
+            "contagem": bool(incluir_contagem),
+        }
 
     res = st.session_state.get("ap_resultado")
     if res is None:
@@ -245,14 +250,24 @@ def modulo_analise_perguntas():
         key="ap_download",
     )
 
-    # ---------------- pré-visualização
+    # ---------------- pré-visualização (o mesmo bloco que vai para o Excel)
     st.subheader("Pré-visualização")
     com_tabela = [p for p, lista in res.por_pergunta.items() if lista]
     if not com_tabela:
         return
+    snap = st.session_state["ap_snap"]
     p_sel = st.selectbox("Pergunta", com_tabela, key="ap_prev_p")
     lista = res.por_pergunta[p_sel]
     c_sel = st.selectbox("Cruzamento", [cz.coluna for cz in lista], key="ap_prev_c")
     cz = next(x for x in lista if x.coluna == c_sel)
-    st.caption(label_final.get(p_sel, p_sel) + " × " + st.session_state.get("ap_rot_cruz", {}).get(c_sel, c_sel))
-    st.dataframe(tabela_para_tela(cz).round(2), use_container_width=True)
+    ws = bloco_como_planilha(
+        cz, snap["labels"].get(p_sel, p_sel), snap["rot_cruz"].get(c_sel, c_sel),
+        snap["limiar"], snap["contagem"], como_texto=True,
+    )
+    html, _trunc_l, _trunc_c = worksheet_para_html(ws, max_linhas=800)
+    altura = int(min(760, max(240, ws.max_row * 21 + 50)))
+    st.components.v1.html(html, height=altura, scrolling=True)
+    st.caption(
+        "Mesma tabela que vai para o Excel (mesclagens, cores do destaque e formatos). "
+        "O arquivo baixado é a fonte da verdade."
+    )

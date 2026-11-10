@@ -40,6 +40,19 @@ class TestTemaFerramenta(unittest.TestCase):
         for sel in ("stFileUploaderDropzone", "stExpander", "stAlert", "stDataFrame", "tab-list", "stBaseButton-primary"):
             self.assertIn(sel, tf._CSS)
 
+    def test_analise_das_perguntas_tem_tema(self):
+        self.assertIn("Análise das Perguntas", tf.TEMA_ESCURO)
+
+    def test_marca_centralizada_e_botao_de_voltar(self):
+        # a marca é um st.button (mantém a sessão); o CSS a desenha no lugar do texto «Início»
+        self.assertIn(".st-key-tf_logo_home", tf._CSS)
+        self.assertIn('content:"informa"', tf._CSS)
+        fonte = open(os.path.join(RAIZ, "analises", "_tema_ferramenta.py"), encoding="utf-8").read()
+        self.assertIn('key="tf_logo_home"', fonte)
+        self.assertIn("st.columns([3, 2, 3]", fonte)
+        h = tf.html_cabecalho("Título", "sub", "<path/>", "#fff")
+        self.assertNotIn("informa", h)   # a marca não é mais texto fixo no HTML do título
+
 
 if __name__ == "__main__":
     unittest.main()

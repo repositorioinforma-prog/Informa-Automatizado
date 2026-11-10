@@ -6,8 +6,9 @@ Uso (app.py): para as ferramentas listadas em TEMA_ESCURO, em vez do logo + bot�
     cabecalho_ferramenta(analise, voltar=voltar_ao_inicio)
 
 Isso injeta o CSS escuro (fundo da página inteira, abas, campos, botões, uploader, alertas,
-tabelas) e desenha a faixa do topo com a marca, o título da ferramenta e o botão
-«← Central de ferramentas». Para temar outra ferramenta, basta incluí-la em TEMA_ESCURO.
+tabelas) e desenha a faixa do topo: título da ferramenta à esquerda, a marca «informa» centralizada
+(ela é um botão: clicar volta à Central de ferramentas) e o botão «← Central de ferramentas» à direita.
+Para temar outra ferramenta, basta incluí-la em TEMA_ESCURO.
 """
 from __future__ import annotations
 
@@ -21,6 +22,11 @@ TEMA_ESCURO: Dict[str, tuple] = {
     "Relatório Analítico": (
         "Confere o relatório e prepara a apresentação",
         '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5"/><path d="M9 13h7M9 17h7M9 9h2"/>',
+        "#34d399",
+    ),
+    "Análise das Perguntas": (
+        "Cada pergunta do Total cruzada pelos segmentos",
+        '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>',
         "#34d399",
     ),
 }
@@ -59,10 +65,6 @@ html, body, .stApp, [data-testid="stApp"], [data-testid="stAppViewContainer"], [
   background:radial-gradient(circle,rgba(255,255,255,.06) 1px,transparent 1.6px) 0 0/14px 14px,linear-gradient(180deg,#18212e,#141c27);
   box-shadow:0 12px 32px rgba(5,9,16,.35)}
 .tf-topo{display:flex;align-items:center;gap:22px}
-.tf-marca{line-height:1}
-.tf-marca b{display:block;font-size:32px;font-weight:800;letter-spacing:-1.5px;color:#fff}
-.tf-marca small{display:block;margin-top:6px;font-size:11px;font-weight:700;letter-spacing:2.6px;color:var(--tf-lima)}
-.tf-sep{width:1px;align-self:stretch;margin:4px 0;background:var(--tf-linha2)}
 .tf-tit{display:flex;align-items:center;gap:14px}
 .tf-chip{flex:none;width:46px;height:46px;border-radius:14px;display:flex;align-items:center;justify-content:center;color:#fff;
   background:linear-gradient(135deg,var(--c),color-mix(in srgb,var(--c) 55%,#000));box-shadow:0 8px 20px color-mix(in srgb,var(--c) 30%,transparent)}
@@ -109,6 +111,17 @@ input::placeholder, textarea::placeholder{color:#8190a6 !important;-webkit-text-
 .stButton > button[kind="primary"]:hover, .stButton > button[data-testid="stBaseButton-primary"]:hover,
 button[data-testid="stBaseButton-primary"]:hover{background:#c6ee86 !important;color:#0e1520 !important;border-color:#c6ee86 !important}
 
+/* ---------- marca centralizada = botão «voltar à Central» ---------- */
+.st-key-tf_logo_home, .st-key-tf_logo_home [data-testid="stButton"]{display:flex;justify-content:center}
+.st-key-tf_logo_home button{background:transparent !important;border:0 !important;box-shadow:none !important;min-height:0 !important;
+  padding:8px 18px !important;border-radius:14px !important;transform:none !important;cursor:pointer}
+.st-key-tf_logo_home button:hover{background:var(--tf-lima-bg) !important;transform:none !important}
+.st-key-tf_logo_home button p{font-size:0 !important;line-height:1 !important;margin:0 !important;text-align:center}
+.st-key-tf_logo_home button p::before{content:"informa";display:block;font-size:32px;font-weight:800;letter-spacing:-1.5px;line-height:1;color:#fff;transition:color .15s}
+.st-key-tf_logo_home button p::after{content:"PESQUISA E DADOS";display:block;margin-top:6px;font-size:11px;font-weight:700;letter-spacing:2.6px;line-height:1;color:var(--tf-lima)}
+.st-key-tf_logo_home button:hover p::before{color:var(--tf-lima)}
+.st-key-tf_logo_home button:focus-visible{outline:2px solid var(--tf-lima) !important;outline-offset:2px}
+
 /* ---------- uploader ---------- */
 [data-testid="stFileUploaderDropzone"]{background:rgba(255,255,255,.025) !important;border:1.5px dashed var(--tf-linha2) !important;border-radius:16px !important;padding:1.2rem}
 [data-testid="stFileUploaderDropzone"]:hover{border-color:var(--tf-lima) !important;background:var(--tf-lima-bg) !important}
@@ -130,6 +143,14 @@ button[data-testid="stBaseButton-primary"]:hover{background:#c6ee86 !important;c
 [data-testid="stAlert"]:has([data-testid="stAlertContentWarning"]){border-color:rgba(251,191,36,.5) !important;background:rgba(251,191,36,.10) !important}
 [data-testid="stAlert"]:has([data-testid="stAlertContentError"]){border-color:rgba(248,113,113,.55) !important;background:rgba(248,113,113,.10) !important}
 
+/* ---------- seleção múltipla (tags) e métricas ---------- */
+[data-baseweb="tag"]{background:var(--tf-lima-bg) !important;border:1px solid rgba(164,214,86,.35);border-radius:8px !important}
+[data-baseweb="tag"] *{color:var(--tf-lima) !important}
+[data-testid="stMetric"]{padding:14px 18px;border:1px solid var(--tf-linha);border-radius:16px;
+  background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015))}
+[data-testid="stMetricLabel"] *{color:var(--tf-muted) !important;font-weight:700}
+[data-testid="stMetricValue"] *{color:#fff !important;font-weight:800}
+
 /* ---------- tabelas ---------- */
 [data-testid="stDataFrame"]{border:1px solid var(--tf-linha);border-radius:14px;overflow:hidden;
   filter:invert(.92) hue-rotate(180deg) saturate(.8)}
@@ -147,24 +168,29 @@ def aplicar_tema_escuro() -> None:
 
 
 def html_cabecalho(titulo: str, sub: str, icone: str, cor: str) -> str:
-    """HTML da faixa do topo (marca + título da ferramenta). Separado para poder ser testado."""
+    """HTML do título da ferramenta (chip + nome + subtítulo). Separado para poder ser testado.
+    A classe `tf-ancora` marca a faixa do topo para o CSS."""
     return (
-        '<div class="tf-topo tf-ancora">'
-        '<div class="tf-marca"><b>informa</b><small>PESQUISA E DADOS</small></div>'
-        '<span class="tf-sep"></span>'
-        f'<div class="tf-tit"><span class="tf-chip" style="--c:{html.escape(cor)}">'
+        '<div class="tf-topo tf-ancora"><div class="tf-tit">'
+        f'<span class="tf-chip" style="--c:{html.escape(cor)}">'
         f'<svg viewBox="0 0 24 24" aria-hidden="true">{icone}</svg></span>'
-        f'<div><h1>{html.escape(titulo)}</h1><p>{html.escape(sub)}</p></div></div>'
-        "</div>"
+        f'<div><h1>{html.escape(titulo)}</h1><p>{html.escape(sub)}</p></div></div></div>'
     )
 
 
 def cabecalho_ferramenta(nome: str, voltar: Callable[[], None]) -> None:
-    """Tema escuro + faixa do topo da ferramenta `nome` (que deve estar em TEMA_ESCURO)."""
+    """Tema escuro + faixa do topo da ferramenta `nome` (que deve estar em TEMA_ESCURO).
+
+    A marca no centro é um st.button estilizado (não um link): assim a sessão continua viva e os
+    arquivos já enviados não se perdem ao voltar."""
     sub, icone, cor = TEMA_ESCURO[nome]
     aplicar_tema_escuro()
-    col_titulo, col_voltar = st.columns([5, 1.4], vertical_alignment="center")
+    col_titulo, col_marca, col_voltar = st.columns([3, 2, 3], vertical_alignment="center")
     with col_titulo:
         st.markdown(html_cabecalho(nome, sub, icone, cor), unsafe_allow_html=True)
+    with col_marca:
+        st.button("Início", key="tf_logo_home", on_click=voltar, help="Voltar à Central de ferramentas")
     with col_voltar:
-        st.button("← Central de ferramentas", key="voltar_inicio", on_click=voltar, use_container_width=True)
+        _, direita = st.columns([1, 1.6])
+        with direita:
+            st.button("← Central de ferramentas", key="voltar_inicio", on_click=voltar, use_container_width=True)

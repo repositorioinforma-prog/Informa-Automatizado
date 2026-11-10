@@ -567,6 +567,41 @@ def _bloco_excel(ws, topo: int, cz: Cruzamento, rot_pergunta: str, rot_cruz: str
     return r_total + k_tot + 1
 
 
+def _ajusta_larguras(ws, n_segmentos: int) -> None:
+    for k in (1, 2, 3):
+        ws.column_dimensions[get_column_letter(k)].width = _LARG_TEXTO
+    for k in range(4, 4 + n_segmentos + 1):
+        ws.column_dimensions[get_column_letter(k)].width = _LARG_SEGMENTO
+
+
+def _texto_formatado(valor: float, formato: str) -> str:
+    """Como o Excel mostra o número (vírgula decimal): «###0» inteiro, «###0.0» 1 casa, «###0.0%» percentual."""
+    if formato == "###0.0%":
+        return f"{valor * 100:.1f}".replace(".", ",") + "%"
+    if formato == "###0.0":
+        return f"{valor:.1f}".replace(".", ",")
+    return f"{valor:.0f}"
+
+
+def bloco_como_planilha(cz: Cruzamento, rot_pergunta: str, rot_cruz: str, limiar: float = LIMIAR_Z_PADRAO,
+                        contagem: bool = False, como_texto: bool = False):
+    """Planilha (openpyxl) só com a tabela de um cruzamento, idêntica ao bloco que vai para o Excel.
+    Serve à pré-visualização da tela: o que se vê é o que sai no arquivo.
+    `como_texto=True` troca cada número pelo texto já formatado (o renderizador HTML da tela não aplica
+    o formato de número das células)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = NOME_ABA
+    _bloco_excel(ws, 1, cz, rot_pergunta, rot_cruz, limiar, contagem)
+    _ajusta_larguras(ws, cz.contagem.shape[1])
+    if como_texto:
+        for linha in ws.iter_rows():
+            for c in linha:
+                if isinstance(c.value, (int, float)) and not isinstance(c.value, bool):
+                    c.value = _texto_formatado(float(c.value), c.number_format)
+    return ws
+
+
 def montar_excel(
     resultado: ResultadoAnalise,
     labels: Sequence[LabelVar],
@@ -595,10 +630,7 @@ def montar_excel(
                 linha_inicial[p] = topo
             n_max = max(n_max, cz.contagem.shape[1])
             topo = _bloco_excel(ws, topo, cz, lv.label_usada, labels_cruzamento.get(cz.coluna) or cz.coluna, limiar_z, incluir_contagem)
-    for k in (1, 2, 3):
-        ws.column_dimensions[get_column_letter(k)].width = _LARG_TEXTO
-    for k in range(4, 4 + n_max + 1):
-        ws.column_dimensions[get_column_letter(k)].width = _LARG_SEGMENTO
+    _ajusta_larguras(ws, n_max)
 
     res = wb.create_sheet("Resumo")
     f_b, f_n = Font(name="Arial", size=10, bold=True), Font(name="Arial", size=10)

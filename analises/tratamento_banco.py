@@ -8,6 +8,8 @@ a variável. Quando está tudo certo, baixa o banco tratado em .sav.
 Etapa 2: com o banco já com peso, calcula as tabelas do Total e Completo (TABLES/CTABLES), confere cada uma
 e, se o Relatório Descritivo for enviado, compara número a número. O resultado sai em Excel no layout que o SPSS
 exporta (download + pré-visualização na tela, que é a mesma aba do arquivo).
+Antes de calcular, um painel lista as variáveis de segmento do Completo com cada categoria e seus casos; as de base
+pequena (menos de 25, exceto P1/P2/P3/P7) já vêm marcadas como missing e não viram coluna.
 Toda a lógica mora em core/tratamento_banco_math.py, core/syntax_executor_math.py e core/total_completo_math.py.
 Chaves de session_state com prefixo `tb_` (etapa 1) e `tc_` (etapa 2).
 """
@@ -20,6 +22,18 @@ from core.analise_perguntas_math import html_sobre_fundo_branco
 from core.analitica_dados import carregar_banco, eh_nome_de_peso
 from core.planilha_utils import worksheet_para_html
 from core.revisor_syntax_math import SEVERITY_LABELS
+from core.missings_cruzamento_math import (
+    BASE_MINIMA,
+    EXCECOES,
+    aplicar_missings_do_banco,
+    listar_categorias,
+    marcados_do_painel,
+    missings_para_calculo,
+    sintaxe_missing,
+    sugestao,
+    tabela_para_painel,
+    variaveis_de_segmento,
+)
 from core.syntax_executor_math import executar_syntax
 from core.total_completo_excel_math import (
     SECOES,
@@ -34,6 +48,7 @@ from core.total_completo_math import (
     calcular_total_e_completo,
     comparar_com_descritivo,
     ler_descritivo,
+    ler_tabelas,
 )
 from core.tratamento_banco_math import (
     exportar_sav,
@@ -244,7 +259,11 @@ def _banco_da_etapa2(arq):
     chave = _hash(conteudo)
     if st.session_state.get("tc_chave_banco") == chave:
         return st.session_state["tc_banco"]
-    banco = carregar_banco(conteudo, arq.name)
+    banco = carregar_banco(conteudo, arq.name, user_missing=True)
+    # df_bruto guarda os códigos de missing do .sav (o painel mostra quantos casos eles têm);
+    # o cálculo usa o banco sem eles, como o SPSS.
+    st.session_state["tc_df_bruto"] = banco.df
+    banco.df = aplicar_missings_do_banco(banco.df, banco.missing_ranges)
     st.session_state["tc_chave_banco"] = chave
     st.session_state["tc_banco"] = banco
     st.session_state.pop("tc_res", None)
@@ -256,6 +275,77 @@ def _df_tabela(calc):
     linhas = [[("" if pd.isna(v) else f"{v:.1f}") for v in calc.valores[i]] for i in range(len(calc.rotulos))]
     linhas.append([f"{c.base:.0f}" for c in calc.colunas])
     return pd.DataFrame(linhas, index=list(calc.rotulos) + ["Base"], columns=colunas)
+
+
+def _mrsets_da_etapa2(b_sx, banco):
+    """Conjuntos múltiplos definidos na Syntax (cache por Syntax + banco)."""
+    if not b_sx:
+        return {}
+    chave = _hash(b_sx, st.session_state.get("tc_chave_banco", "").encode())
+    if st.session_state.get("tc_chave_mrsets") != chave:
+        st.session_state["tc_mrsets"] = executar_syntax(b_sx, banco.df, banco.var_labels, banco.value_labels).mrsets
+        st.session_state["tc_chave_mrsets"] = chave
+    return st.session_state["tc_mrsets"]
+
+
+def _painel_missings(b_tc, banco, peso, mrsets):
+    """Lista as variáveis de segmento da programação com cada categoria e a quantidade de casos; sugere como
+    missing as categorias com base pequena. Devolve o {variável: códigos} escolhido para o cálculo."""
+    tabelas, _ = ler_tabelas(b_tc)
+    st.session_state["tc_missings_atual"] = {}
+    st.markdown("**Missings das variáveis de segmento**")
+    st.caption(
+        "Cada variável que vira coluna no Completo, com os códigos, rótulos e a quantidade de casos (sem peso). "
+        "Categoria marcada como missing não vira coluna (os casos continuam no Total). Já vem marcado o que é missing "
+        "no .sav e o que tem base abaixo do mínimo, exceto as variáveis que você tirar da regra."
+    )
+    c1, c2, c3 = st.columns([1, 3, 2])
+    base_min = int(c1.number_input("Base mínima", min_value=0, value=BASE_MINIMA, step=1, key="tc_base_min",
+                                   help="Categorias com menos casos que isso são marcadas como missing."))
+    incluir_total = c3.checkbox("Incluir segmentos só do Total", value=False, key="tc_seg_total",
+                                help="Por padrão só as variáveis que aparecem como coluna na seção Completo.")
+    secoes = ("Completo", "Total") if incluir_total else ("Completo",)
+    variaveis = variaveis_de_segmento(tabelas, secoes)
+    if not variaveis:
+        st.info("A programação não tem variáveis de segmento nessas seções.")
+        return {}
+    padrao = [v for v in variaveis if v.upper() in EXCECOES]
+    sig = _hash(b_tc, st.session_state.get("tc_chave_banco", "").encode(), str(peso).encode(),
+                str(base_min).encode(), ",".join(variaveis).encode())
+    excecoes = c2.multiselect("Não marcar automaticamente (continuam editáveis)", variaveis, default=padrao,
+                              key=f"tc_excecoes_{sig}")
+    cats = listar_categorias(
+        tabelas, st.session_state["tc_df_bruto"], banco.value_labels, banco.var_labels, mrsets, peso,
+        banco.missing_ranges, base_min, excecoes, secoes,
+    )
+    if not cats:
+        st.info("Nenhuma categoria encontrada nas variáveis de segmento.")
+        return {}
+    painel = tabela_para_painel(cats, sugestao(cats))
+    editado = st.data_editor(
+        painel, key=f"tc_painel_{sig}_{','.join(sorted(excecoes))}", hide_index=True, use_container_width=True,
+        height=min(520, 38 + 35 * len(painel)),
+        disabled=[c for c in painel.columns if c != "Missing"],
+        column_config={
+            "Código": st.column_config.NumberColumn("Código", format="%g"),
+            "Casos": st.column_config.NumberColumn("Casos", help="Casos sem peso, com peso válido (igual à linha Base)."),
+            "Missing": st.column_config.CheckboxColumn("Missing", help="Marque para a categoria não virar coluna."),
+        },
+    )
+    marcados = marcados_do_painel(editado)
+    escolhido = missings_para_calculo(cats, marcados)
+    n_novos = sum(len(v) for v in escolhido.values())
+    n_ja = sum(1 for c in cats if c.ja_missing)
+    st.caption(f"{n_novos} categoria(s) marcada(s) por você/pela regra em {len(escolhido)} variável(is); "
+               f"{n_ja} já eram missing no banco (sempre marcadas).")
+    sintaxe = sintaxe_missing(cats, marcados, mrsets, banco.missing_ranges)
+    if sintaxe:
+        with st.expander("Sintaxe MISSING VALUES para colar no SPSS"):
+            st.code(sintaxe, language="text")
+            st.caption("O comando substitui a definição anterior da variável; por isso o que já era missing no .sav "
+                       "vem junto. Rode antes do Total e Completo.")
+    st.session_state["tc_missings_atual"] = escolhido
+    return escolhido
 
 
 def _previa_excel(calcs):
@@ -333,17 +423,24 @@ def _etapa_total_completo():
                             help="O SPSS usa o peso ligado na sessão; aqui você escolhe qual.")
     peso = None if peso_sel == "Sem peso" else peso_sel
 
+    b_tc = tc.getvalue()
+    b_sx = sx.getvalue() if sx else st.session_state.get("tb_sps_bytes")
+    try:
+        mrsets = _mrsets_da_etapa2(b_sx, banco)
+        missings = _painel_missings(b_tc, banco, peso, mrsets)
+    except Exception as e:  # noqa: BLE001
+        st.error(f"Não foi possível montar o painel de missings: {e}")
+        mrsets, missings = {}, {}
+
     if st.button("Calcular Total e Completo", type="primary", key="tc_rodar"):
         try:
             with st.spinner("Calculando as tabelas e conferindo..."):
-                b_tc = tc.getvalue()
-                b_sx = sx.getvalue() if sx else st.session_state.get("tb_sps_bytes")
-                mrsets = executar_syntax(b_sx, banco.df, banco.var_labels, banco.value_labels).mrsets if b_sx else {}
-                res = calcular_total_e_completo(b_tc, banco.df, banco.value_labels, banco.var_labels, mrsets, peso)
+                res = calcular_total_e_completo(b_tc, banco.df, banco.value_labels, banco.var_labels, mrsets, peso, missings)
                 if desc:
                     res.comparacao = comparar_com_descritivo(res, ler_descritivo(desc.getvalue()))
                     res.findings.extend(achados_da_comparacao_tc(res.comparacao))
             st.session_state["tc_res"] = res
+            st.session_state["tc_missings_usados"] = {k: set(v) for k, v in missings.items()}
             st.session_state["tc_nome_sps"] = tc.name
             st.session_state.pop("tc_excel", None)
         except Exception as e:  # noqa: BLE001
@@ -353,6 +450,10 @@ def _etapa_total_completo():
     res = st.session_state.get("tc_res")
     if res is None:
         return
+
+    if st.session_state.get("tc_missings_usados") != st.session_state.get("tc_missings_atual"):
+        st.warning("Os missings do painel mudaram depois do último cálculo: clique em «Calcular Total e Completo» "
+                   "para atualizar as tabelas.")
 
     from core.revisor_syntax_math import SEVERITY_ORDER
     cont = {k: sum(1 for f in res.findings if f.severity == k) for k in SEVERITY_ORDER}

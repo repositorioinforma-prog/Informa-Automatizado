@@ -178,6 +178,8 @@ class TabelaCalc:
     valores: np.ndarray               # linhas x colunas, % (NaN = coluna sem casos)
     contagens: np.ndarray             # linhas x colunas, soma dos pesos
     erro: str = ""
+    # categorias de segmento deixadas de fora por serem missing (var, grupo, rótulo, casos sem peso)
+    fora: list[tuple[str, str, str, int]] = field(default_factory=list)
 
 
 class ErroTabela(Exception):
@@ -231,7 +233,10 @@ def calcular_tabela(
     var_labels: dict[str, str],
     mrsets: dict[str, list[str]],
     peso: str | None = PESO_PADRAO,
+    missings: dict[str, set] | None = None,
 ) -> TabelaCalc:
+    """`missings`: {variável de segmento (com «$» se for conjunto múltiplo): códigos} que NÃO viram coluna
+    (missing definido pelo usuário; os casos continuam no «Total»)."""
     if not tab.suportada:
         raise ErroTabela(tab.motivo)
     vl = {str(k).upper(): v for k, v in (value_labels or {}).items()}
@@ -273,6 +278,8 @@ def calcular_tabela(
         rot_map = mapa_rotulos(vl.get(tab.var_linha.upper()))
 
     base_linha = valido_peso & valido_linha
+    miss = {str(k).upper(): set(v) for k, v in (missings or {}).items()}
+    fora: list[tuple[str, str, str, int]] = []
 
     # ---- colunas ---------------------------------------------------------
     colunas: list[ColunaCalc] = []
@@ -301,8 +308,12 @@ def calcular_tabela(
             vistos_s = {float(v) for v in pd.unique(mat_s[valido_peso.to_numpy()].to_numpy().ravel()) if pd.notna(v)}
             if seg.upper() in vazias:
                 vistos_s |= {k for k in rot_s if isinstance(k, float)}
+            excl = miss.get(seg.upper(), set())
             for k in sorted(vistos_s):
                 rot_k = rotulo_categoria(k, rot_s)
+                if k in excl:
+                    fora.append((seg, grupo or rot_k, rot_k, int((base_linha & (mat_s == k).any(axis=1)).sum())))
+                    continue
                 colunas.append(ColunaCalc(grupo or rot_k, rot_k, seg, k, 0.0, 0))
                 mascaras.append((mat_s == k).any(axis=1))
             continue
@@ -319,8 +330,12 @@ def calcular_tabela(
         ks = set(_categorias(sserie, valido_peso))
         if seg.upper() in vazias:
             ks |= {k for k in m_seg if isinstance(k, float)}
+        excl = miss.get(seg.upper(), set())
         for k in sorted(ks, key=lambda x: (isinstance(x, str), x)):
             rot_k = rotulo_categoria(k, m_seg)
+            if k in excl:
+                fora.append((seg, grupo or rot_k, rot_k, int((base_linha & (sserie == k)).sum())))
+                continue
             colunas.append(ColunaCalc(grupo or rot_k, rot_k, seg, k, 0.0, 0))
             mascaras.append(sserie == k)
 
@@ -338,7 +353,7 @@ def calcular_tabela(
             valores[:, j] = contagens[:, j] / base_w * 100.0
 
     rotulos = [rotulo_categoria(k, rot_map) for k in cats]
-    return TabelaCalc(tab, colunas, rotulos, cats, valores, contagens)
+    return TabelaCalc(tab, colunas, rotulos, cats, valores, contagens, fora=fora)
 
 
 @dataclass
@@ -349,6 +364,7 @@ class ResultadoTotalCompleto:
     findings: list[Finding]
     peso: str | None
     comparacao: list["ComparacaoTabela"] | None = None
+    missings: dict[str, set] = field(default_factory=dict)      # missings de segmento usados no cálculo
 
     @property
     def n_calculadas(self) -> int:
@@ -362,6 +378,7 @@ def calcular_total_e_completo(
     var_labels: dict[str, str],
     mrsets: dict[str, list[str]] | None = None,
     peso: str | None = PESO_PADRAO,
+    missings: dict[str, set] | None = None,
 ) -> ResultadoTotalCompleto:
     tabelas, findings = ler_tabelas(sps_bytes)
     mrsets = {k.upper(): v for k, v in (mrsets or {}).items()}
@@ -371,7 +388,7 @@ def calcular_total_e_completo(
     erros: dict[int, str] = {}
     for t in tabelas:
         try:
-            calc = calcular_tabela(t, df, value_labels, var_labels, mrsets, peso)
+            calc = calcular_tabela(t, df, value_labels, var_labels, mrsets, peso, missings)
             calculadas.append(calc)
             findings.extend(conferir_tabela(calc, value_labels))
         except ErroTabela as e:
@@ -386,7 +403,9 @@ def calcular_total_e_completo(
     findings.extend(_conferir_repeticoes(tabelas))
     findings.extend(_conferir_segmentos([c for c in calculadas if c is not None]))
     findings.extend(_conferir_pesos(df, peso))
-    return ResultadoTotalCompleto(tabelas, calculadas, erros, findings, peso)
+    findings.extend(_achado_missings([c for c in calculadas if c is not None]))
+    return ResultadoTotalCompleto(tabelas, calculadas, erros, findings, peso, None,
+                                  {str(k).upper(): set(v) for k, v in (missings or {}).items() if v})
 
 
 def mrsets_do_texto(sps_bytes: bytes) -> dict[str, list[str]]:
@@ -458,6 +477,24 @@ def conferir_tabela(calc: TabelaCalc, value_labels: dict[str, dict[Any, str]]) -
     return achados
 
 
+def _achado_missings(calculadas: list[TabelaCalc]) -> list[Finding]:
+    """Registra, para quem lê o resultado, as categorias de segmento que ficaram de fora por serem missing."""
+    vistos: dict[tuple[str, str], tuple[str, int, int]] = {}
+    for c in calculadas:
+        for var, _g, rot, n in c.fora:
+            ant = vistos.get((var.upper(), rot))
+            vistos[(var.upper(), rot)] = (var, n, (ant[2] if ant else 0) + 1)
+    if not vistos:
+        return []
+    partes = [f"{v} · {rot} ({n} caso(s))" for (_, rot), (v, n, _k) in sorted(vistos.items())]
+    return [Finding(
+        "informativo", "TC_MISSING_APLICADO", f"{len(vistos)} categoria(s) de segmento tratadas como missing",
+        "Não viraram coluna das tabelas (os casos continuam no Total): " + "; ".join(partes[:25])
+        + ("…" if len(partes) > 25 else "") + ".",
+        None, None, None, "Declare o mesmo MISSING VALUES no SPSS para o Total e Completo sair igual lá.",
+    )]
+
+
 def _conferir_segmentos(calculadas: list[TabelaCalc]) -> list[Finding]:
     """Casos que ficam fora de um segmento (sem resposta na variável de segmento), uma linha por segmento."""
     por_var: dict[str, dict[str, Any]] = {}
@@ -469,6 +506,9 @@ def _conferir_segmentos(calculadas: list[TabelaCalc]) -> list[Finding]:
         for x in c.colunas:
             if x.grupo != "Total" and not x.var.startswith("$"):
                 soma[x.var] = soma.get(x.var, 0) + x.n
+        for var, _g, _r, n in c.fora:          # missing declarado de propósito: não conta como «caso fora»
+            if not var.startswith("$"):
+                soma[var] = soma.get(var, 0) + n
         for v, n in soma.items():
             d = por_var.setdefault(v.upper(), {"var": v, "faltas": [], "tabelas": 0, "linha": c.tabela.linha})
             d["tabelas"] += 1
@@ -716,6 +756,10 @@ def comparar_com_descritivo(
         usadas.add(escolhido)
         pd_ = {_chave_coluna(g, col): j for j, (g, col) in enumerate(zip(descritivo[escolhido].grupos, descritivo[escolhido].colunas))}
         cobertas.setdefault(escolhido, set()).update(_acha_coluna(ch, pd_) for ch in chaves_app)
+        # colunas que o app deixou de fora por serem missing também contam como «cobertas» (não são erro)
+        cobertas[escolhido].update(
+            j for j in (_acha_coluna(_chave_coluna(g, r), pd_) for _v, g, r, _n in c.fora) if j is not None
+        )
         out.append(_comparar_uma(t.ordem, c, descritivo[escolhido], tolerancia))
 
     for k, d in enumerate(descritivo):

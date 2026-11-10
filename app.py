@@ -9,6 +9,7 @@ import streamlit as st
 
 from analises.base_reduzida import processador_base_reduzida
 from analises.analise_perguntas import modulo_analise_perguntas
+from analises.perfil import modulo_perfil
 from analises.exclusao_colunas import modulo_exclusao_colunas
 from analises.base_multiplas import modulo_base_multiplas
 from analises.legendas import modulo_legendas
@@ -302,6 +303,7 @@ MENU = (
     "Análise Residual (A.R)",
     "Relatório Analítico",
     "Análise das Perguntas",
+    "Perfil",
     "Controle Geral",
 )
 
@@ -378,6 +380,10 @@ def main():
 
     if analise == "Análise das Perguntas":
         modulo_analise_perguntas()
+        return
+
+    if analise == "Perfil":
+        modulo_perfil()
         return
 
     if analise == "Exclusões":

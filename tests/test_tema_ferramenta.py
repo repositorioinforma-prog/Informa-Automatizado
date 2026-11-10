@@ -43,6 +43,9 @@ class TestTemaFerramenta(unittest.TestCase):
     def test_analise_das_perguntas_tem_tema(self):
         self.assertIn("Análise das Perguntas", tf.TEMA_ESCURO)
 
+    def test_perfil_tem_tema(self):
+        self.assertIn("Perfil", tf.TEMA_ESCURO)
+
     def test_marca_centralizada_e_botao_de_voltar(self):
         # a marca é um st.button (mantém a sessão); o CSS a desenha no lugar do texto «Início»
         self.assertIn(".st-key-tf_logo_home", tf._CSS)

@@ -43,6 +43,9 @@ class TestTemaFerramenta(unittest.TestCase):
     def test_analise_das_perguntas_tem_tema(self):
         self.assertIn("Análise das Perguntas", tf.TEMA_ESCURO)
 
+    def test_padronizacao_de_titulos_tem_tema(self):
+        self.assertIn("Padronização de Títulos", tf.TEMA_ESCURO)
+
     def test_perfil_tem_tema(self):
         self.assertIn("Perfil", tf.TEMA_ESCURO)
 

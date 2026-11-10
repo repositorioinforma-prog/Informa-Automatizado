@@ -29,6 +29,11 @@ TEMA_ESCURO: Dict[str, tuple] = {
         '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>',
         "#34d399",
     ),
+    "Padronização de Títulos": (
+        "O título padrão de cada tipo de pergunta",
+        '<path d="M4 7V5h16v2M12 5v14M9 19h6"/>',
+        "#34d399",
+    ),
     "Perfil": (
         "Sexo, idade, renda, escolaridade e religião do banco",
         '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',

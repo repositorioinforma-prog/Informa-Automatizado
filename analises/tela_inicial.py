@@ -37,6 +37,10 @@ SECOES: List[Dict[str, Any]] = [
             {"titulo": "Revisor de Syntax SPSS", "sub": "Confere a syntax antes de rodar",
              "desc": "Confere a syntax SPSS antes de rodar.",
              "icone": "lupa", "alvo": "Revisor de Syntax SPSS", "tags": ["spss", "sps", "programação"]},
+            {"titulo": "Tratamento do Banco", "sub": "Roda a Syntax no banco e confere a recodificação",
+             "desc": "Roda a Syntax no banco original (recodificações e rótulos), confere se ficou certo, compara com o banco do SPSS e gera o banco tratado em .sav.",
+             "entrada": ["Syntax .sps", "Banco original .sav", "Banco do SPSS .sav (opcional)"],
+             "icone": "codificacao", "alvo": "Tratamento do Banco", "tags": ["banco", "recodificação", "syntax", "spss", "sav", "tratamento"]},
         ],
     },
     {

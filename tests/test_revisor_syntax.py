@@ -50,3 +50,17 @@ def test_detecta_erro_textual_conhecido():
     sps = "VARIABLE LABELS Q1R 'Deputado Estudual'.\n".encode("cp1252")
     result = review_syntax(sps)
     assert "POSSIVEL_ERRO_TEXTUAL" in _codes(result)
+
+
+def test_value_labels_com_barra_dentro_do_rotulo_nao_sao_cortados():
+    from core.revisor_syntax_math import parse_syntax
+    sps = b"VALUE LABELS /Q1R 97 'Branco/Nulo' 98 'Nao irei votar' /Q2R 1 'Espirita/Kardecista' 2 'Outra'.\n"
+    parsed, _ = parse_syntax(sps)
+    assert parsed.value_labels["Q1R"] == {97: "Branco/Nulo", 98: "Nao irei votar"}
+    assert parsed.value_labels["Q2R"] == {1: "Espirita/Kardecista", 2: "Outra"}
+
+
+def test_ponto_decimal_nao_encerra_o_comando():
+    from core.revisor_syntax_math import split_commands
+    cmds = split_commands("RECODE X (1.5=2) INTO Y.\nEXECUTE.\n")
+    assert [c for _, c in cmds] == ["RECODE X (1.5=2) INTO Y.", "EXECUTE."]

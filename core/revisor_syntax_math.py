@@ -163,7 +163,7 @@ def split_commands(text: str) -> list[tuple[int, str]]:
             if ch in "'\"":
                 quote = ch
                 buf.append(ch)
-            elif ch == ".":
+            elif ch == "." and (i + 1 >= len(clean) or clean[i + 1] in " \t\r\n"):
                 cmd = "".join(buf).strip()
                 if cmd:
                     commands.append((start_line, cmd + "."))
@@ -510,6 +510,32 @@ def _parse_variable_labels(commands: Iterable[tuple[int, str]]) -> dict[str, tup
     return result
 
 
+def _dividir_secoes_value_labels(body: str) -> list[str]:
+    """Divide o corpo de um VALUE LABELS nas seções `/var ...`, olhando só
+    para barras FORA de aspas (rótulos como 'Branco/Nulo' ou
+    'Espírita/Kardecista' não podem ser cortados)."""
+    cortes: list[int] = []
+    quote: str | None = None
+    for i, ch in enumerate(body):
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"":
+            quote = ch
+        elif ch == "/" and re.match(r"/\s*[A-Za-z_@$#]", body[i:]):
+            cortes.append(i)
+    if not cortes:
+        return [body]
+    partes: list[str] = []
+    ant = 0
+    for c in cortes:
+        partes.append(body[ant:c])
+        ant = c
+    partes.append(body[ant:])
+    return partes
+
+
 def _parse_value_labels(commands: Iterable[tuple[int, str]]) -> tuple[dict[str, dict[Any, str]], dict[str, int]]:
     values: dict[str, dict[Any, str]] = defaultdict(dict)
     lines: dict[str, int] = {}
@@ -520,9 +546,7 @@ def _parse_value_labels(commands: Iterable[tuple[int, str]]) -> tuple[dict[str, 
             continue
         body = re.sub(r"^\s*(VALUE\s+LABELS|VALUE\s+LABEL)\b", "", raw, flags=re.I).rstrip(".").strip()
         # Seções podem vir como /var1 var2 1 'x' ... ou var 1 'x'.
-        slash_sections = re.split(r"(?=/\s*[A-Za-z_@$#])", body)
-        if len(slash_sections) == 1:
-            slash_sections = [body]
+        slash_sections = _dividir_secoes_value_labels(body)
         for section in slash_sections:
             section = section.strip()
             if not section:

@@ -34,6 +34,11 @@ TEMA_ESCURO: Dict[str, tuple] = {
         '<path d="M4 7V5h16v2M12 5v14M9 19h6"/>',
         "#34d399",
     ),
+    "Tratamento do Banco": (
+        "Roda a Syntax no banco e confere a recodificação",
+        '<path d="M4 6h16M4 12h10M4 18h7"/><path d="m15 16 2 2 4-4"/>',
+        "#60a5fa",
+    ),
     "Perfil": (
         "Sexo, idade, renda, escolaridade e religião do banco",
         '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',

@@ -112,6 +112,12 @@ class ResultadoTratamento:
 # Utilidades
 # ---------------------------------------------------------------------------
 
+def _tocadas(exe: ResultadoExecucao) -> list[str]:
+    """Variáveis criadas + alteradas pela Syntax (sem repetir, sem ligar para maiúsculas)."""
+    vistos = {n.upper() for n in exe.criadas}
+    return list(exe.criadas) + [m for m in exe.modificadas if m.upper() not in vistos]
+
+
 def _coluna(df: pd.DataFrame, nome: str):
     n = nome.upper()
     for c in df.columns:
@@ -166,7 +172,7 @@ def conferir_recodificacao(exe: ResultadoExecucao) -> list[Finding]:
     }
 
     sem_rotulo_de_variavel: list[str] = []
-    for nome in list(exe.criadas) + [m for m in exe.modificadas if m not in exe.criadas]:
+    for nome in _tocadas(exe):
         col = _coluna(exe.df, nome)
         if col is None:
             continue
@@ -274,7 +280,7 @@ def _conferir_codigos_entre_variaveis(exe: ResultadoExecucao) -> list[Finding]:
     sempre uma troca de 97/98 — o tipo de erro que passa despercebido."""
     achados: list[Finding] = []
     por_rotulo: dict[str, dict[str, list[tuple[str, float]]]] = {}
-    for nome in list(exe.criadas) + [m for m in exe.modificadas if m not in exe.criadas]:
+    for nome in _tocadas(exe):
         for cod, rot in _mapa_rotulos(exe.value_labels.get(nome.upper())).items():
             if cod not in CODIGOS_NAO_RESPOSTA:
                 continue
@@ -315,7 +321,7 @@ def _conferir_rotulos_parecidos(exe: ResultadoExecucao) -> list[Finding]:
     import difflib
 
     donos: dict[str, set[str]] = {}
-    for nome in list(exe.criadas) + [m for m in exe.modificadas if m not in exe.criadas]:
+    for nome in _tocadas(exe):
         for cod, rot in _mapa_rotulos(exe.value_labels.get(nome.upper())).items():
             if len(rot) >= 6:
                 donos.setdefault(rot, set()).add(nome.upper())
@@ -373,7 +379,7 @@ def comparar_com_spss(exe: ResultadoExecucao, spss: BancoCarregado) -> list[Comp
     spss_vl = {str(k).upper(): v for k, v in spss.value_labels.items()}
 
     mesmo_tamanho = len(exe.df) == len(spss.df)
-    for nome in list(exe.criadas) + [m for m in exe.modificadas if m not in exe.criadas]:
+    for nome in _tocadas(exe):
         col_m = _coluna(exe.df, nome)
         col_s = _coluna(spss.df, nome)
         if col_s is None:
@@ -448,6 +454,18 @@ def _metadados_simples(banco: BancoCarregado) -> SimpleNamespace:
     )
 
 
+def _na_ordem_original(df: pd.DataFrame, ordem: list[str]) -> pd.DataFrame:
+    """Devolve as colunas na ordem do banco enviado; as novas ficam no fim."""
+    por_nome = {str(c).upper(): c for c in df.columns}
+    cols: list[Any] = []
+    for n in ordem:
+        c = por_nome.pop(n.upper(), None)
+        if c is not None:
+            cols.append(c)
+    cols.extend(por_nome.values())
+    return df[cols]
+
+
 def banco_sem_geradas(sps_bytes: bytes, banco: BancoCarregado) -> tuple[BancoCarregado, list[str]]:
     """Tira do banco as variáveis que a Syntax cria (se já estiverem lá),
     para a Syntax rodar do zero. Devolve (banco limpo, nomes removidos)."""
@@ -473,6 +491,7 @@ def tratar_banco(
     partir_do_zero: bool = True,
 ) -> ResultadoTratamento:
     removidas: list[str] = []
+    ordem_original = [str(c) for c in banco.df.columns]
     if partir_do_zero:
         banco, removidas = banco_sem_geradas(sps_bytes, banco)
     try:
@@ -482,6 +501,7 @@ def tratar_banco(
         revisao = {"counts": {k: 0 for k in SEVERITY_ORDER}, "findings": [], "erro": str(e)}
 
     exe = executar_syntax(sps_bytes, banco.df, banco.var_labels, banco.value_labels, banco.missing_ranges)
+    exe.df = _na_ordem_original(exe.df, ordem_original)
     conferencias = conferir_recodificacao(exe)
 
     comparacao = None
@@ -507,6 +527,16 @@ def tratar_banco(
             "para a conferência valer de verdade.",
             None, None, None, None,
         ))
+    longos = [k for k in rotulos_longos(exe.var_labels) if k in {str(c).upper() for c in exe.df.columns}]
+    if longos:
+        extras_info.append(Finding(
+            "informativo", "TRAT_ROTULO_LONGO",
+            f"{len(longos)} rótulo(s) de variável passam de {LIMITE_ROTULO_BYTES} bytes",
+            "O .sav gravado pelo app encurta estes rótulos de variável (limite da gravação): "
+            + ", ".join(longos[:12]) + (" …" if len(longos) > 12 else "")
+            + ". São textos longos do questionário; não afetam as tabelas.",
+            None, longos[0], None, None,
+        ))
     todos = revisao_findings + exe.findings + conferencias + extras + extras_info
     todos.sort(key=lambda f: (SEVERITY_ORDER.get(f.severity, 99), f.line or 10**9, f.code))
     return ResultadoTratamento(exe, revisao, conferencias, comparacao, todos, erro_cmp, revisao_findings)
@@ -524,11 +554,26 @@ def nome_arquivo_tratado(nome_original: str) -> str:
     return f"{base}.sav"
 
 
+LIMITE_ROTULO_BYTES = 255        # limite do formato .sav na gravação
+
+
+def _cortar_bytes(txt: str, limite: int = LIMITE_ROTULO_BYTES) -> str:
+    """Corta em `limite` bytes sem deixar um caractere acentuado pela metade."""
+    b = txt.encode("utf-8")
+    if len(b) <= limite:
+        return txt
+    return b[:limite].decode("utf-8", errors="ignore").rstrip()
+
+
+def rotulos_longos(var_labels: dict[str, str]) -> list[str]:
+    return [k for k, v in var_labels.items() if v and len(v.encode("utf-8")) > LIMITE_ROTULO_BYTES]
+
+
 def exportar_sav(exe: ResultadoExecucao) -> bytes:
     from controle.exporters.sav import write_sav_bytes
 
     nomes = {str(c).upper(): c for c in exe.df.columns}
-    column_labels = {nomes[k]: v for k, v in exe.var_labels.items() if k in nomes and v is not None}
+    column_labels = {nomes[k]: _cortar_bytes(v) for k, v in exe.var_labels.items() if k in nomes and v is not None}
     value_labels: dict[str, dict] = {}
     for k, mp in exe.value_labels.items():
         if k not in nomes or not mp:

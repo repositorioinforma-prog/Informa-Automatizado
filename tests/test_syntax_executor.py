@@ -124,11 +124,11 @@ VALUE LABELS Q1R 1 'Branco/Nulo' 2 'Sim/Não' 3 'Outro'.
         r = executar_syntax(_sps(self.SPS), _df())
         self.assertEqual(r.df["P1"].tolist()[:3], [1.0, 2.0, 2.0])
         self.assertTrue(np.isnan(r.df["P1"].iloc[3]))
-        self.assertEqual(r.df["TOTAL"].tolist(), [1.0] * 4)
+        self.assertEqual(r.df["total"].tolist(), [1.0] * 4)
         self.assertEqual(r.df["P4"].dropna().tolist(), [1.0, 2.0, 3.0, 1.0])
         self.assertEqual(r.var_labels["P1"], "Sexo")
         self.assertEqual(r.value_labels["P1"], {1: "Masculino", 2: "Feminino"})
-        self.assertEqual(r.criadas, ["TOTAL", "P1", "P4", "Q1R"])
+        self.assertEqual(r.criadas, ["total", "P1", "P4", "Q1R"])
 
     def test_rotulo_com_barra_nao_e_cortado(self):
         r = executar_syntax(_sps(self.SPS), _df())
@@ -190,10 +190,16 @@ MRSETS
 
     def test_compute_aritmetico(self):
         r = executar_syntax(_sps("compute dobro = Q1 * 2.\ncompute um = 1."), _df())
-        self.assertEqual(r.df["DOBRO"].tolist()[:3], [2.0, 4.0, 6.0])
+        self.assertEqual(r.df["dobro"].tolist()[:3], [2.0, 4.0, 6.0])
+
+    def test_mantem_a_grafia_da_syntax_no_nome_da_variavel(self):
+        r = executar_syntax(_sps("recode SEXO (1=1) into juncaoreligiao."), _df())
+        self.assertIn("juncaoreligiao", r.df.columns)
+        self.assertNotIn("JUNCAORELIGIAO", r.df.columns)
+        self.assertEqual(r.criadas, ["juncaoreligiao"])
 
     def test_variaveis_geradas(self):
-        self.assertEqual(variaveis_geradas(_sps(self.SPS)), ["TOTAL", "P1", "P4", "Q1R"])
+        self.assertEqual(variaveis_geradas(_sps(self.SPS)), ["total", "P1", "P4", "Q1R"])
 
 
 if __name__ == "__main__":

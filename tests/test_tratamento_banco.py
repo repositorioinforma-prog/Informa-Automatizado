@@ -204,6 +204,28 @@ class PartirDoZeroTests(unittest.TestCase):
         self.assertTrue(any(x.code == "TRAT_GERADAS_REMOVIDAS" for x in segundo.achados))
 
 
+class OrdemERotulosLongosTests(unittest.TestCase):
+    def test_variavel_refeita_volta_para_a_mesma_posicao(self):
+        banco = _banco()
+        banco.df.insert(1, "P1", 9.0)               # banco já veio com P1 no meio
+        res = tratar_banco(SPS.encode(), banco)
+        self.assertEqual(list(res.execucao.df.columns)[:3], ["SEXO", "P1", "Q4"])
+
+    def test_rotulo_longo_e_cortado_sem_quebrar_acento(self):
+        from core.tratamento_banco_math import _cortar_bytes, rotulos_longos
+        txt = "ç" * 200                                  # 400 bytes
+        corte = _cortar_bytes(txt)
+        self.assertLessEqual(len(corte.encode()), 255)
+        self.assertNotIn("\ufffd", corte)
+        self.assertEqual(rotulos_longos({"A": txt, "B": "curto"}), ["A"])
+
+    def test_aviso_de_rotulo_longo(self):
+        banco = _banco()
+        banco.var_labels["Q4"] = "x" * 300
+        r = tratar_banco(SPS.encode(), banco)
+        self.assertTrue(any(f.code == "TRAT_ROTULO_LONGO" for f in r.achados))
+
+
 class ExportarSavTests(unittest.TestCase):
     def test_ida_e_volta_preserva_valores_e_rotulos(self):
         res = tratar_banco(SPS.encode(), _banco())

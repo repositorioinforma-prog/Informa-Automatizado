@@ -287,7 +287,7 @@ def parse_recode_completo(linha: int, bruto: str) -> ComandoRecode:
             break
     if pos_into is not None:
         antes_into, depois_into = corpo[:pos_into], corpo[pos_into + 4:]
-        destinos = [v.upper() for v in re.findall(_NOME, depois_into)]
+        destinos = re.findall(_NOME, depois_into)      # mantém a grafia da Syntax (o SPSS também mantém)
     else:
         antes_into, destinos = corpo, []
 
@@ -459,7 +459,7 @@ def _executar_compute(df: pd.DataFrame, bruto: str) -> tuple[str, pd.Series]:
     m = re.match(rf"\s*COMPUTE\s+({_NOME})\s*=\s*(.+?)\.?\s*$", bruto, flags=re.I | re.S)
     if not m:
         raise ErroDeSyntax("COMPUTE mal formado")
-    alvo = m.group(1).upper()
+    alvo = m.group(1)
     expr = m.group(2).strip().replace("**", "^").replace("^", "**")
     if re.search(r"[A-Za-z_]\w*\s*\(", expr):
         raise ErroDeSyntax("COMPUTE com função não suportado")
@@ -584,8 +584,11 @@ def executar_syntax(
     criadas: list[str] = []
     modificadas: list[str] = []
 
+    def _ja(lista: list[str], nome: str) -> bool:
+        return nome.upper() in {x.upper() for x in lista}
+
     def nova(nome: str):
-        if nome not in criadas:
+        if not _ja(criadas, nome):
             criadas.append(nome)
 
     for linha, bruto in comandos:
@@ -619,7 +622,7 @@ def executar_syntax(
                     d[nome_col] = res
                     if col_d is None:
                         nova(destino)
-                    elif destino not in modificadas and destino not in criadas:
+                    elif not _ja(modificadas, destino) and not _ja(criadas, destino):
                         modificadas.append(destino)
                     vars_tocadas.append(destino)
                     validos = int(res.notna().sum())
@@ -657,7 +660,7 @@ def executar_syntax(
                 d[col if col is not None else alvo] = serie
                 if col is None:
                     nova(alvo)
-                elif alvo not in modificadas and alvo not in criadas:
+                elif not _ja(modificadas, alvo) and not _ja(criadas, alvo):
                     modificadas.append(alvo)
                 registros.append(RegistroComando(linha, "COMPUTE", resumo, "ok", "", [alvo]))
                 continue
@@ -750,12 +753,12 @@ def variaveis_geradas(sps_bytes: bytes) -> list[str]:
                 cmd = parse_recode_completo(linha, bruto)
                 if cmd.com_into:
                     for d in cmd.destinos:
-                        if d not in out:
+                        if d.upper() not in {x.upper() for x in out}:
                             out.append(d)
             elif palavra == "COMPUTE":
                 m = re.match(rf"\s*COMPUTE\s+({_NOME})\s*=", bruto, flags=re.I)
-                if m and m.group(1).upper() not in out:
-                    out.append(m.group(1).upper())
+                if m and m.group(1).upper() not in {x.upper() for x in out}:
+                    out.append(m.group(1))
         except ErroDeSyntax:
             continue
     return out

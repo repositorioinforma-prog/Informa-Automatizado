@@ -205,18 +205,21 @@ def sugerir_identificacao(nome_banco: str) -> Tuple[str, str]:
 
 
 # ---------------------------------------------------------------- Excel
-# Layout idêntico ao Perfil que o SPSS exporta (conferido em «Perfil_Teresópolis_RJ_Set26» e
-# «Perfil_Tocantins_2_Set26»): Arial 9, título em negrito centralizado e mesclado em A:B, cabeçalho
-# «Total», moldura média em volta de cada bloco, valores com precisão total (a casa decimal é só de exibição).
-_FONTE = "Arial"
+# Estrutura idêntica ao Perfil que o SPSS exporta (conferido em «Perfil_Teresópolis_RJ_Set26» e
+# «Perfil_Tocantins_2_Set26»): título em negrito mesclado em A:B, cabeçalho «Total», moldura média em volta
+# de cada bloco, valores com precisão total (a casa decimal é só de exibição).
+# Formatação pedida pela equipe: fonte DIN 10 no arquivo todo; coluna A (largura 21) alinhada à esquerda e
+# centralizada na vertical; coluna B (largura 8) centralizada nos dois sentidos.
+_FONTE = "DIN"
+_TAMANHO = 10
 _MEDIO = Side(style="medium")
 FORMATO_PCT = "0.0"
 FORMATO_BASE = "###0"
 FORMATO_MEDIA = "0.00"
 _ALT_TITULO = 18.0
 _ALT_LINHA = 16.0
-_LARG_VALOR = 9.45
-_LARG_MIN_ROTULO = 11.19
+_LARG_ROTULO = 21.0
+_LARG_VALOR = 8.0
 
 
 def _texto_numero(valor: float, formato: str) -> str:
@@ -231,14 +234,13 @@ def _escrever_blocos(ws, blocos: Iterable[BlocoPerfil], como_texto: bool = False
     """Escreve os blocos empilhados (título, «Total», categorias, Base, Média, linha em branco).
     Devolve a última linha usada."""
     linha = 1
-    maior_rotulo = 0
 
     def valor(v: float, formato: str):
         return _texto_numero(v, formato) if como_texto else v
 
     def celula(r: int, c: int, v: Any, formato: Optional[str], alinh: str, topo: bool, base: bool):
         cel = ws.cell(row=r, column=c, value=v)
-        cel.font = Font(name=_FONTE, size=10 if v == " " else 9)    # a célula vazia do cabeçalho é Arial 10 no original
+        cel.font = Font(name=_FONTE, size=_TAMANHO)
         cel.alignment = Alignment(horizontal=alinh, vertical="center")
         cel.border = Border(left=_MEDIO, right=_MEDIO, top=_MEDIO if topo else Side(), bottom=_MEDIO if base else Side())
         if formato and not isinstance(v, str):
@@ -248,11 +250,11 @@ def _escrever_blocos(ws, blocos: Iterable[BlocoPerfil], como_texto: bool = False
         ws.cell(row=linha, column=1, value=b.titulo)
         ws.merge_cells(start_row=linha, start_column=1, end_row=linha, end_column=2)
         t = ws.cell(row=linha, column=1)       # estilo depois da mesclagem
-        t.font = Font(name=_FONTE, size=9, bold=True)
+        t.font = Font(name=_FONTE, size=_TAMANHO, bold=True)
         t.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[linha].height = _ALT_TITULO
         linha += 1
-        celula(linha, 1, " ", None, "center", True, True)
+        celula(linha, 1, " ", None, "left", True, True)
         celula(linha, 2, "Total", None, "center", True, True)
         ws.row_dimensions[linha].height = _ALT_LINHA
         linha += 1
@@ -265,12 +267,11 @@ def _escrever_blocos(ws, blocos: Iterable[BlocoPerfil], como_texto: bool = False
         for k, (rot, v, fmt) in enumerate(itens):
             ultimo = k == len(itens) - 1
             celula(linha, 1, rot, None, "left", k == 0, ultimo)
-            celula(linha, 2, v, fmt, "right", k == 0, ultimo)
+            celula(linha, 2, v, fmt, "center", k == 0, ultimo)
             ws.row_dimensions[linha].height = _ALT_LINHA
-            maior_rotulo = max(maior_rotulo, len(rot))
             linha += 1
         linha += 1      # linha em branco entre blocos
-    ws.column_dimensions["A"].width = max(_LARG_MIN_ROTULO, maior_rotulo + 1.0)
+    ws.column_dimensions["A"].width = _LARG_ROTULO
     ws.column_dimensions["B"].width = _LARG_VALOR
     return linha - 1
 

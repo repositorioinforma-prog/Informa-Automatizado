@@ -151,8 +151,18 @@ class TestExcel(unittest.TestCase):
         ws = wb[pt.NOME_ABA]
         self.assertIn("A1:B1", [str(r) for r in ws.merged_cells.ranges])
         t = ws["A1"]
-        self.assertEqual((t.value, t.font.b, t.font.name, t.font.sz, t.alignment.horizontal), ("Sexo", True, "Arial", 9, "center"))
+        self.assertEqual((t.value, t.font.b, t.font.name, t.font.sz, t.alignment.horizontal), ("Sexo", True, "DIN", 10, "center"))
         self.assertEqual((ws["A2"].value, ws["B2"].value), (" ", "Total"))
+        self.assertEqual((ws.column_dimensions["A"].width, ws.column_dimensions["B"].width), (21.0, 8.0))
+        for linha in ws.iter_rows():
+            for c in linha:
+                if c.value is not None:
+                    self.assertEqual((c.font.name, c.font.sz), ("DIN", 10))
+                    self.assertEqual(c.alignment.vertical, "center")
+        self.assertEqual(ws["A3"].alignment.horizontal, "left")
+        self.assertEqual(ws["B3"].alignment.horizontal, "center")
+        self.assertEqual(ws["B2"].alignment.horizontal, "center")
+        self.assertEqual(ws["B5"].alignment.horizontal, "center")
         self.assertEqual(ws["B3"].number_format, "0.0")
         self.assertEqual(ws["B3"].border.top.style, "medium")
         self.assertIsNone(ws["B4"].border.top.style)

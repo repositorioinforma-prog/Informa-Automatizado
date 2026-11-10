@@ -8,6 +8,7 @@ import os
 import streamlit as st
 
 from analises.base_reduzida import processador_base_reduzida
+from analises.analise_perguntas import modulo_analise_perguntas
 from analises.exclusao_colunas import modulo_exclusao_colunas
 from analises.base_multiplas import modulo_base_multiplas
 from analises.legendas import modulo_legendas
@@ -300,6 +301,7 @@ MENU = (
     "Matriz de Correlação",
     "Análise Residual (A.R)",
     "Relatório Analítico",
+    "Análise das Perguntas",
     "Controle Geral",
 )
 
@@ -372,6 +374,10 @@ def main():
 
     if analise == "Exclusão de Colunas por Base":
         modulo_exclusao_colunas()
+        return
+
+    if analise == "Análise das Perguntas":
+        modulo_analise_perguntas()
         return
 
     if analise == "Exclusões":

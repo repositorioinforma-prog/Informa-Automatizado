@@ -153,7 +153,9 @@ class TestExcel(unittest.TestCase):
         t = ws["A1"]
         self.assertEqual((t.value, t.font.b, t.font.name, t.font.sz, t.alignment.horizontal), ("Sexo", True, "DIN", 10, "center"))
         self.assertEqual((ws["A2"].value, ws["B2"].value), (" ", "Total"))
-        self.assertEqual((ws.column_dimensions["A"].width, ws.column_dimensions["B"].width), (21.0, 8.0))
+        # o arquivo guarda a largura + o preenchimento da coluna, para o Excel mostrar 21 e 8
+        self.assertAlmostEqual(ws.column_dimensions["A"].width, pt.LARG_COL_A + 0.78, places=6)
+        self.assertAlmostEqual(ws.column_dimensions["B"].width, pt.LARG_COL_B + 0.78, places=6)
         for linha in ws.iter_rows():
             for c in linha:
                 if c.value is not None:

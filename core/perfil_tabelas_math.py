@@ -218,8 +218,13 @@ FORMATO_BASE = "###0"
 FORMATO_MEDIA = "0.00"
 _ALT_TITULO = 18.0
 _ALT_LINHA = 16.0
-_LARG_ROTULO = 21.0
-_LARG_VALOR = 8.0
+# Larguras que aparecem no Excel (Formatar > Largura da coluna). O arquivo guarda a largura somada ao
+# preenchimento interno da coluna (~0,78 caractere medido no Excel da equipe: gravar 21 aparecia como 20,22).
+LARG_COL_A = 21.0
+LARG_COL_B = 8.0
+_PREENCHIMENTO_COLUNA = 0.78
+_LARG_ROTULO = LARG_COL_A + _PREENCHIMENTO_COLUNA
+_LARG_VALOR = LARG_COL_B + _PREENCHIMENTO_COLUNA
 
 
 def _texto_numero(valor: float, formato: str) -> str:

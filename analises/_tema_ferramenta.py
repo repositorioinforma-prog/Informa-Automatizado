@@ -6,8 +6,8 @@ Uso (app.py): para as ferramentas listadas em TEMA_ESCURO, em vez do logo + bot�
     cabecalho_ferramenta(analise, voltar=voltar_ao_inicio)
 
 Isso injeta o CSS escuro (fundo da página inteira, abas, campos, botões, uploader, alertas,
-tabelas) e desenha a faixa do topo: título da ferramenta à esquerda, a marca «informa» centralizada
-(ela é um botão: clicar volta à Central de ferramentas) e o botão «← Central de ferramentas» à direita.
+tabelas) e desenha a faixa do topo: título da ferramenta à esquerda, a marca «informa»
+à direita (ela é um botão: clicar volta à Central de ferramentas; não há mais o botão «← Central de ferramentas»).
 Para temar outra ferramenta, basta incluí-la em TEMA_ESCURO.
 """
 from __future__ import annotations
@@ -132,7 +132,7 @@ input::placeholder, textarea::placeholder{color:#8190a6 !important;-webkit-text-
 button[data-testid="stBaseButton-primary"]:hover{background:#c6ee86 !important;color:#0e1520 !important;border-color:#c6ee86 !important}
 
 /* ---------- marca centralizada = botão «voltar à Central» ---------- */
-.st-key-tf_logo_home, .st-key-tf_logo_home [data-testid="stButton"]{display:flex;justify-content:center}
+.st-key-tf_logo_home, .st-key-tf_logo_home [data-testid="stButton"]{display:flex;justify-content:flex-end}
 .st-key-tf_logo_home button{background:transparent !important;border:0 !important;box-shadow:none !important;min-height:0 !important;
   padding:8px 18px !important;border-radius:14px !important;transform:none !important;cursor:pointer}
 .st-key-tf_logo_home button:hover{background:var(--tf-lima-bg) !important;transform:none !important}
@@ -201,16 +201,12 @@ def html_cabecalho(titulo: str, sub: str, icone: str, cor: str) -> str:
 def cabecalho_ferramenta(nome: str, voltar: Callable[[], None]) -> None:
     """Tema escuro + faixa do topo da ferramenta `nome` (que deve estar em TEMA_ESCURO).
 
-    A marca no centro é um st.button estilizado (não um link): assim a sessão continua viva e os
+    A marca à direita é um st.button estilizado (não um link): assim a sessão continua viva e os
     arquivos já enviados não se perdem ao voltar."""
     sub, icone, cor = TEMA_ESCURO[nome]
     aplicar_tema_escuro()
-    col_titulo, col_marca, col_voltar = st.columns([3, 2, 3], vertical_alignment="center")
+    col_titulo, col_marca = st.columns([4, 1.3], vertical_alignment="center")
     with col_titulo:
         st.markdown(html_cabecalho(nome, sub, icone, cor), unsafe_allow_html=True)
     with col_marca:
         st.button("Início", key="tf_logo_home", on_click=voltar, help="Voltar à Central de ferramentas")
-    with col_voltar:
-        _, direita = st.columns([1, 1.6])
-        with direita:
-            st.button("← Central de ferramentas", key="voltar_inicio", on_click=voltar, use_container_width=True)

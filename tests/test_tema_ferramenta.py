@@ -52,13 +52,17 @@ class TestTemaFerramenta(unittest.TestCase):
     def test_tratamento_do_banco_tem_tema(self):
         self.assertIn("Tratamento do Banco", tf.TEMA_ESCURO)
 
-    def test_marca_centralizada_e_botao_de_voltar(self):
+    def test_marca_a_direita_no_lugar_do_botao_de_voltar(self):
         # a marca é um st.button (mantém a sessão); o CSS a desenha no lugar do texto «Início»
         self.assertIn(".st-key-tf_logo_home", tf._CSS)
         self.assertIn('content:"informa"', tf._CSS)
         fonte = open(os.path.join(RAIZ, "analises", "_tema_ferramenta.py"), encoding="utf-8").read()
         self.assertIn('key="tf_logo_home"', fonte)
-        self.assertIn("st.columns([3, 2, 3]", fonte)
+        corpo = fonte[fonte.index("def cabecalho_ferramenta"):]
+        self.assertIn("st.columns([4, 1.3]", corpo)            # título à esquerda, marca à direita
+        self.assertNotIn("voltar_inicio", corpo)               # sem o botão «← Central de ferramentas»
+        self.assertNotIn("← Central de ferramentas", corpo)
+        self.assertIn("justify-content:flex-end", tf._CSS.split(".st-key-tf_logo_home button{")[0])
         h = tf.html_cabecalho("Título", "sub", "<path/>", "#fff")
         self.assertNotIn("informa", h)   # a marca não é mais texto fixo no HTML do título
 

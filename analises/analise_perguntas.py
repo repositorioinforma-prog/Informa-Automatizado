@@ -31,6 +31,7 @@ from core.analise_perguntas_math import (
     bloco_como_planilha,
     html_sobre_fundo_branco,
     montar_excel,
+    nome_arquivo_saida,
     resolver_labels,
     separar_total,
 )
@@ -246,7 +247,7 @@ def modulo_analise_perguntas():
     st.download_button(
         "Baixar Excel",
         data=st.session_state["ap_excel"],
-        file_name="Analise_das_Perguntas.xlsx",
+        file_name=nome_arquivo_saida(arq_sps.name),
         mime=_MIME_XLSX,
         key="ap_download",
     )

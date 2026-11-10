@@ -567,6 +567,29 @@ def _bloco_excel(ws, topo: int, cz: Cruzamento, rot_pergunta: str, rot_cruz: str
     return r_total + k_tot + 1
 
 
+_RE_PREFIXO_TOTAL = re.compile(r"^\s*(?:total(?:[ _]+(?:e|\+|&)[ _]+completo)?|completo)[ _\-]+", re.I)
+_RE_COPIA = re.compile(r"\s*\(\d+\)\s*$")
+_RE_INVALIDOS = re.compile(r'[\\/:*?"<>|\r\n\t]')
+PREFIXO_ARQUIVO = "Análise das Perguntas"
+
+
+def nome_arquivo_saida(nome_sps: str, extensao: str = ".xlsx") -> str:
+    """Nome do Excel: «Análise das Perguntas» + o nome do projeto que vem no .sps.
+
+    «Total e Completo_Rio de Janeiro Deputados_RJ_Set26.sps» -> «Análise das Perguntas_Rio de Janeiro
+    Deputados_RJ_Set26.xlsx». Tira só o prefixo do tipo de programação (Total / Total e Completo /
+    Completo) e o « (1)» que o navegador põe em cópias; o resto do nome fica como está."""
+    base = str(nome_sps or "").replace("\\", "/").rsplit("/", 1)[-1]
+    base = re.sub(r"\.sps$", "", base.strip(), flags=re.I)
+    base = _RE_COPIA.sub("", base)
+    base = _RE_PREFIXO_TOTAL.sub("", base)
+    if canon(base) in ("total", "total e completo", "completo"):   # o nome era só o tipo de programação
+        base = ""
+    base = _RE_INVALIDOS.sub("", base).strip(" _-.")
+    nome = f"{PREFIXO_ARQUIVO}_{base}" if base else PREFIXO_ARQUIVO
+    return nome + extensao
+
+
 def _ajusta_larguras(ws, n_segmentos: int) -> None:
     for k in (1, 2, 3):
         ws.column_dimensions[get_column_letter(k)].width = _LARG_TEXTO

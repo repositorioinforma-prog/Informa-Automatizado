@@ -130,6 +130,32 @@ class TestCruzar(unittest.TestCase):
         self.assertEqual([c.coluna for c in res.por_pergunta["Q"]], ["P1"])
 
 
+class TestNomeDoArquivo(unittest.TestCase):
+    def test_mantem_o_nome_do_projeto(self):
+        f = ap.nome_arquivo_saida
+        self.assertEqual(f("Total e Completo_Rio de Janeiro Deputados_RJ_Set26.sps"),
+                         "Análise das Perguntas_Rio de Janeiro Deputados_RJ_Set26.xlsx")
+        self.assertEqual(f("Total_Rio de Janeiro Deputados_RJ_Set26.sps"),
+                         "Análise das Perguntas_Rio de Janeiro Deputados_RJ_Set26.xlsx")
+        self.assertEqual(f("Completo_Teresópolis_RJ_Set26.SPS"), "Análise das Perguntas_Teresópolis_RJ_Set26.xlsx")
+
+    def test_upload_com_underscores_e_copia_do_navegador(self):
+        f = ap.nome_arquivo_saida
+        self.assertEqual(f("Total_e_Completo_Rio_de_Janeiro_Deputados_RJ_Set26 (1).sps"),
+                         "Análise das Perguntas_Rio_de_Janeiro_Deputados_RJ_Set26.xlsx")
+
+    def test_sem_prefixo_conhecido_mantem_tudo(self):
+        f = ap.nome_arquivo_saida
+        self.assertEqual(f("Rio de Janeiro Deputados_RJ_Set26.sps"), "Análise das Perguntas_Rio de Janeiro Deputados_RJ_Set26.xlsx")
+        self.assertEqual(f("Totalmente_Outro_Projeto.sps"), "Análise das Perguntas_Totalmente_Outro_Projeto.xlsx")
+
+    def test_vazio_e_caracteres_invalidos(self):
+        f = ap.nome_arquivo_saida
+        self.assertEqual(f(""), "Análise das Perguntas.xlsx")
+        self.assertEqual(f("Total.sps"), "Análise das Perguntas.xlsx")
+        self.assertEqual(f("Total e Completo_A/B:C*.sps"), "Análise das Perguntas_BC.xlsx")
+
+
 class TestExcel(unittest.TestCase):
     def _planilha(self, limiar=1.85):
         df = _banco()

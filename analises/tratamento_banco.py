@@ -6,7 +6,8 @@ conjuntos múltiplos), confere se deu certo e, se o banco já tratado pelo SPSS 
 a variável. Quando está tudo certo, baixa o banco tratado em .sav.
 
 Etapa 2: com o banco já com peso, calcula as tabelas do Total e Completo (TABLES/CTABLES), confere cada uma
-e, se o Relatório Descritivo for enviado, compara número a número. (A saída em Excel entra depois.)
+e, se o Relatório Descritivo for enviado, compara número a número. O resultado sai em Excel no layout que o SPSS
+exporta (download + pré-visualização na tela, que é a mesma aba do arquivo).
 Toda a lógica mora em core/tratamento_banco_math.py, core/syntax_executor_math.py e core/total_completo_math.py.
 Chaves de session_state com prefixo `tb_` (etapa 1) e `tc_` (etapa 2).
 """
@@ -15,9 +16,18 @@ import hashlib
 import pandas as pd
 import streamlit as st
 
+from core.analise_perguntas_math import html_sobre_fundo_branco
 from core.analitica_dados import carregar_banco, eh_nome_de_peso
+from core.planilha_utils import worksheet_para_html
 from core.revisor_syntax_math import SEVERITY_LABELS
 from core.syntax_executor_math import executar_syntax
+from core.total_completo_excel_math import (
+    SECOES,
+    montar_excel_total_completo,
+    nao_geradas,
+    nome_arquivo_total_completo,
+    planilha_tabelas,
+)
 from core.total_completo_math import (
     PESO_PADRAO,
     achados_da_comparacao_tc,
@@ -32,6 +42,8 @@ from core.tratamento_banco_math import (
 )
 
 _ICONE = {"critico": "🔴", "possivel_erro": "🟠", "revisar": "🟡", "informativo": "🔵"}
+_MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+_MAX_TABELAS_PREVIA = 25      # a prévia "de todas" mostra as primeiras tabelas; o arquivo baixado tem todas
 _STATUS = {"ok": "✅ rodou", "ignorado": "⚪ sem efeito", "nao_suportado": "⚠️ não executado", "erro": "❌ erro"}
 
 
@@ -246,6 +258,47 @@ def _df_tabela(calc):
     return pd.DataFrame(linhas, index=list(calc.rotulos) + ["Base"], columns=colunas)
 
 
+def _previa_excel(calcs):
+    """Mostra as tabelas como ficam no Excel (mesma função que escreve o arquivo)."""
+    ws = planilha_tabelas(calcs, como_texto=True)
+    html, _trunc_l, _trunc_c = worksheet_para_html(ws, max_linhas=400)
+    altura = int(min(760, max(240, ws.max_row * 21 + 50)))
+    st.components.v1.html(html_sobre_fundo_branco(html), height=altura, scrolling=True)
+
+
+def _bloco_excel(res):
+    """Escolha das seções, geração e download do Excel do Total e Completo."""
+    n_por = {s: sum(1 for c in res.calculadas if c is not None and c.tabela.secao == s) for s in SECOES}
+    st.markdown("**Excel (layout do SPSS)**")
+    secoes = st.multiselect(
+        "Seções no Excel", list(SECOES), default=[s for s in SECOES if n_por[s]],
+        format_func=lambda s: f"{s} ({n_por[s]} tabelas)", key="tc_secoes",
+    )
+    if not secoes:
+        st.caption("Escolha ao menos uma seção.")
+        return
+    faltam = nao_geradas(res, secoes)
+    if faltam:
+        st.warning(f"{len(faltam)} tabela(s) não puderam ser calculadas e ficam fora da aba principal; "
+                   "elas aparecem na aba «Não geradas» do Excel, com o motivo.")
+    chave = (id(res), tuple(secoes))
+    if st.button("Preparar Excel", key="tc_preparar_excel"):
+        try:
+            with st.spinner("Montando o Excel..."):
+                st.session_state["tc_excel"] = (chave, montar_excel_total_completo(res, secoes))
+        except Exception as e:  # noqa: BLE001
+            st.error(f"Não foi possível gerar o Excel: {e}")
+    pronto = st.session_state.get("tc_excel")
+    if pronto and pronto[0] == chave:
+        st.download_button(
+            "Baixar Excel", data=pronto[1],
+            file_name=nome_arquivo_total_completo(st.session_state.get("tc_nome_sps", ""), secoes),
+            mime=_MIME_XLSX, key="tc_baixar_excel",
+        )
+    elif pronto:
+        st.caption("A escolha mudou: clique em «Preparar Excel» de novo.")
+
+
 def _etapa_total_completo():
     st.caption(
         "Calcula, no banco com peso, as tabelas do Total e Completo (percentual da coluna e «Base»), confere cada "
@@ -291,6 +344,8 @@ def _etapa_total_completo():
                     res.comparacao = comparar_com_descritivo(res, ler_descritivo(desc.getvalue()))
                     res.findings.extend(achados_da_comparacao_tc(res.comparacao))
             st.session_state["tc_res"] = res
+            st.session_state["tc_nome_sps"] = tc.name
+            st.session_state.pop("tc_excel", None)
         except Exception as e:  # noqa: BLE001
             st.error(f"Não foi possível calcular: {e}")
             return
@@ -320,6 +375,8 @@ def _etapa_total_completo():
     m[2].metric("Erros / possíveis erros", graves)
     m[3].metric("A revisar", cont["revisar"])
     m[4].metric("Iguais ao Descritivo", "—" if res.comparacao is None else f"{n_igual}/{len(res.tabelas)}")
+
+    _bloco_excel(res)
 
     abas = ["Conferências", "Tabelas", "Resumo"]
     if res.comparacao is not None:
@@ -357,12 +414,24 @@ def _etapa_total_completo():
                 st.caption("Nada encontrado.")
             else:
                 nomes = [f"#{t.ordem} · {t.secao} · {t.var_linha} × {', '.join(t.colunas)} · {t.titulo}" for t, _ in filtrados]
-                esc = st.selectbox("Tabela", range(len(nomes)), format_func=lambda i: nomes[i], key="tc_tabela_sel")
-                t, c = filtrados[esc]
-                st.markdown(f"**{t.titulo}**")
-                if t.pergunta:
-                    st.caption(t.pergunta)
-                st.dataframe(_df_tabela(c), use_container_width=True)
+                todas = f"Todas as tabelas ({len(filtrados)}) — como ficam no Excel"
+                opcoes = [todas] + nomes
+                esc = st.selectbox("Tabela", range(len(opcoes)), format_func=lambda i: opcoes[i], key="tc_tabela_sel2")
+                if esc == 0:
+                    mostrar = [c for _, c in filtrados][:_MAX_TABELAS_PREVIA]
+                    _previa_excel(mostrar)
+                    if len(filtrados) > _MAX_TABELAS_PREVIA:
+                        st.caption(f"Pré-visualização das {_MAX_TABELAS_PREVIA} primeiras tabelas; escolha uma tabela na "
+                                   "lista (ou use a busca) para ver as outras. O Excel baixado tem todas.")
+                else:
+                    t, c = filtrados[esc - 1]
+                    if t.pergunta:
+                        st.caption(t.pergunta)
+                    _previa_excel([c])
+                    with st.expander("Ver como tabela simples"):
+                        st.dataframe(_df_tabela(c), use_container_width=True)
+                st.caption("Mesma aba do Excel: % da coluna com o peso (a tela mostra 1 casa; o arquivo guarda o valor inteiro) "
+                           "e «Base» sem ponderar. O arquivo baixado é a fonte da verdade.")
 
     with tabs["Resumo"]:
         st.dataframe(pd.DataFrame([{

@@ -30,10 +30,13 @@ obrigatórios). Mesmo padrão usado no Relatório Automatizado — troca
 `if st.button(...)` por `if modo_auto or st.button(...)` nas etapas
 puras, sem duplicar lógica.
 """
+import html
 import io
 
 import openpyxl
 import streamlit as st
+
+from core.analise_perguntas_math import html_sobre_fundo_branco
 
 from core.base_multiplas_math import (
     parsear_blocos,
@@ -137,15 +140,115 @@ _ETAPAS_COM_PROGRESSO = [
 ]
 
 
-def _mostrar_progresso(etapa_atual):
-    nomes = [nome for chave, nome in _ETAPAS_COM_PROGRESSO]
-    chaves = [chave for chave, nome in _ETAPAS_COM_PROGRESSO]
+# Nome curto (cabe no stepper) e o que cada etapa faz (tela de boas-vindas)
+_NOME_CURTO = {
+    "limpeza_multiplas": "Limpeza",
+    "base_multiplas": "Base nas Múltiplas",
+    "origem": "Células e bordas",
+    "novos_termos": "Ordenar tabelas",
+    "layout": "Layout",
+    "codigo_06_07": "DIN 9 e quebras",
+    "alturas": "Alturas",
+    "capa": "Capa",
+    "final": "Concluído",
+}
+_DESCRICAO_ETAPA = {
+    "limpeza_multiplas": "Tira a linha branca das Múltiplas que ainda não têm Base.",
+    "base_multiplas": "Preenche a Base das Múltiplas, por arquivo ou com um valor.",
+    "origem": "Você escolhe a origem (SPSS Relatoria ou Inovação) e o app preenche células e bordas.",
+    "novos_termos": "Ordena as tabelas (código 03), com termos extras opcionais.",
+    "layout": "Aplica o layout do Total, sem exclusão por Base reduzida.",
+    "codigo_06_07": "Fonte DIN 9, linhas e quebras de página.",
+    "alturas": "Ajusta a altura de labels, títulos e perguntas.",
+    "capa": "Insere a capa «Resultados pelo total» acima da primeira tabela.",
+    "final": "Confere o resultado, baixa o arquivo e, se quiser, divide as tabelas.",
+}
+_FORA_DO_FLUXO = (
+    "Exclusão por Base reduzida", "Cabeçalhos repetidos", "Legendas", "Capas de Resultados (código 15)",
+)
+
+_CSS_ASSISTENTE = """
+<style>
+.ta-steps{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 10px}
+.ta-passo{display:flex;align-items:center;gap:8px;padding:6px 11px 6px 7px;border-radius:999px;border:1px solid var(--tf-linha,#273244);
+  background:rgba(255,255,255,.03);color:var(--tf-fraco,#6f7f96);font-size:13px;font-weight:700;line-height:1;white-space:nowrap}
+.ta-bola{flex:none;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;
+  border:1.5px solid var(--tf-linha2,#33415a);color:var(--tf-muted,#9aa8bd)}
+.stApp .ta-passo .ta-nome{color:var(--tf-fraco,#6f7f96)}
+.stApp .ta-passo.ta-feito .ta-nome{color:var(--tf-muted,#9aa8bd)}
+.stApp .ta-passo.ta-atual .ta-nome{color:#0e1520}
+.stApp .ta-passo .ta-bola{color:var(--tf-muted,#9aa8bd)}
+.stApp .ta-passo.ta-feito .ta-bola{color:var(--tf-lima,#b4e26b)}
+.stApp .ta-passo.ta-atual .ta-bola{color:var(--tf-lima,#b4e26b)}
+.ta-passo.ta-feito .ta-bola{background:rgba(180,226,107,.16);border-color:rgba(180,226,107,.55);color:var(--tf-lima,#b4e26b)}
+.ta-passo.ta-atual{color:#0e1520;background:var(--tf-lima,#b4e26b);border-color:var(--tf-lima,#b4e26b);box-shadow:0 6px 18px rgba(164,214,86,.25)}
+.ta-passo.ta-atual .ta-bola{background:#0e1520;border-color:#0e1520;color:var(--tf-lima,#b4e26b)}
+.ta-barra{height:4px;border-radius:4px;background:var(--tf-linha,#273244);overflow:hidden;margin-bottom:6px}
+.ta-barra > span{display:block;height:100%;background:var(--tf-lima,#b4e26b);border-radius:4px;transition:width .3s}
+.ta-etiqueta{font-size:12px;font-weight:800;letter-spacing:1.6px;color:var(--tf-lima,#b4e26b);margin:0 0 2px}
+.ta-arquivo{display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:8px 14px;border:1px solid var(--tf-linha,#273244);
+  border-radius:12px;background:rgba(255,255,255,.03);font-size:14px;color:var(--tf-muted,#9aa8bd)}
+.stApp .ta-arquivo b, .stApp .ta-arquivo{color:var(--tf-muted,#9aa8bd)}
+.stApp .ta-arquivo b{color:#fff}
+.ta-arquivo b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ta-boasvindas{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin:6px 0 16px}
+.ta-item{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border:1px solid var(--tf-linha,#273244);border-radius:16px;
+  background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015))}
+.stApp .ta-item .ta-num{color:#0e1520}
+.ta-num{flex:none;width:30px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;
+  color:#0e1520;background:var(--tf-lima,#b4e26b)}
+.stApp .ta-item h4{margin:0 0 2px;font-size:15.5px;color:#fff;padding:0;border:0}
+.stApp .ta-item p{margin:0;font-size:13.5px;color:var(--tf-muted,#9aa8bd);line-height:1.4}
+.ta-fora{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px;color:var(--tf-muted,#9aa8bd);font-size:13.5px}
+.ta-fora span.ta-tag{padding:4px 10px;border-radius:8px;border:1px dashed var(--tf-linha2,#33415a);color:var(--tf-fraco,#6f7f96)}
+</style>
+"""
+
+
+def _html_stepper(etapa_atual):
+    """HTML do stepper (separado da tela para poder ser testado)."""
+    chaves = [c for c, _ in _ETAPAS_COM_PROGRESSO]
     if etapa_atual not in chaves:
-        return
+        return ""
     idx = chaves.index(etapa_atual)
-    st.progress(
-        idx / (len(chaves) - 1),
-        text=f"Etapa {idx + 1} de {len(chaves)}: {nomes[idx]}",
+    passos = []
+    for i, chave in enumerate(chaves):
+        estado = "ta-feito" if i < idx else ("ta-atual" if i == idx else "")
+        bola = "✓" if i < idx else str(i + 1)
+        passos.append(
+            f'<div class="ta-passo {estado}"><span class="ta-bola">{bola}</span>'
+            f'<span class="ta-nome">{html.escape(_NOME_CURTO[chave])}</span></div>'
+        )
+    pct = round(100 * idx / (len(chaves) - 1))
+    nome = dict(_ETAPAS_COM_PROGRESSO)[etapa_atual]
+    return (
+        f'<div class="ta-etiqueta">ETAPA {idx + 1} DE {len(chaves)}</div>'
+        f'<div class="ta-barra"><span style="width:{pct}%"></span></div>'
+        f'<div class="ta-steps" title="{html.escape(nome)}">' + "".join(passos) + "</div>"
+    )
+
+
+def _mostrar_progresso(etapa_atual):
+    corpo = _html_stepper(etapa_atual)
+    if corpo:
+        st.markdown(_CSS_ASSISTENTE + corpo, unsafe_allow_html=True)
+
+
+def _html_boas_vindas():
+    itens = []
+    n = 0
+    for chave, nome in _ETAPAS_COM_PROGRESSO:
+        if chave == "final":
+            continue
+        n += 1
+        itens.append(
+            f'<div class="ta-item"><span class="ta-num">{n}</span><div><h4>{html.escape(nome)}</h4>'
+            f'<p>{html.escape(_DESCRICAO_ETAPA[chave])}</p></div></div>'
+        )
+    fora = "".join(f'<span class="ta-tag">{html.escape(x)}</span>' for x in _FORA_DO_FLUXO)
+    return (
+        '<div class="ta-boasvindas">' + "".join(itens) + "</div>"
+        f'<div class="ta-fora"><b>Fora deste fluxo:</b> {fora}</div>'
     )
 
 
@@ -153,18 +256,21 @@ def _mostrar_progresso(etapa_atual):
 # Assistente
 # =========================================================
 def modulo_total_automatico():
-    st.header("Total Automático")
-
+    # o título e a marca vêm do cabeçalho da ferramenta (app.py); aqui só o assistente
     if "ta_step" not in st.session_state:
         st.session_state["ta_step"] = "aviso"
     if "ta_log" not in st.session_state:
         st.session_state["ta_log"] = []
 
     if st.session_state["ta_step"] != "aviso":
-        col_reiniciar, col_auto = st.columns([1, 2])
-        with col_reiniciar:
-            if st.button("🔄 Reiniciar do zero", key="ta_reiniciar"):
-                _reiniciar()
+        col_arq, col_auto, col_reiniciar = st.columns([3, 2.4, 1.3], vertical_alignment="center")
+        with col_arq:
+            nome_arq = st.session_state.get("ta_nome_arquivo")
+            if nome_arq:
+                st.markdown(
+                    _CSS_ASSISTENTE + f'<div class="ta-arquivo">Arquivo em andamento <b>{html.escape(nome_arq)}</b></div>',
+                    unsafe_allow_html=True,
+                )
         with col_auto:
             st.checkbox(
                 "⚡ Modo semiautomático",
@@ -178,6 +284,9 @@ def modulo_total_automatico():
                     "capa etc.)."
                 ),
             )
+        with col_reiniciar:
+            if st.button("🔄 Reiniciar", key="ta_reiniciar", use_container_width=True):
+                _reiniciar()
 
     etapa = st.session_state["ta_step"]
     modo_auto = st.session_state.get("ta_modo_auto", False)
@@ -185,23 +294,23 @@ def modulo_total_automatico():
 
     # ---------------------------------------------------------------
     if etapa == "aviso":
-        st.warning(
-            "Versão enxuta do Relatório Automatizado, pra relatórios "
-            "pelo total: limpeza de linha branca nas Múltiplas sem base "
-            "→ Base nas Múltiplas → SPSS Relatoria/Inovação → Ordenar "
-            "tabelas → layout → DIN 9 + quebras → altura de "
-            "labels/títulos/perguntas → capa \"Resultados pelo total\" → "
-            "Divisor de Tabelas opcional no final. "
-            "Sem exclusão por Base reduzida, sem cabeçalhos repetidos, "
-            "sem Legendas e sem as Capas de Resultados do código 15 — "
-            "aqui a capa é outra, mais simples."
+        st.markdown(
+            _CSS_ASSISTENTE
+            + '<div class="ta-etiqueta">COMO FUNCIONA</div>'
+            + "<p>Versão enxuta do Relatório Automatizado, pensada para relatórios <b>pelo total</b>. "
+            "Você envia o descritivo e o assistente aplica as etapas abaixo, na ordem. "
+            "Ao final, o Divisor de Tabelas é opcional (e não gera Índice).</p>"
+            + _html_boas_vindas(),
+            unsafe_allow_html=True,
         )
-        if st.button("Entendi, continuar", key="ta_aviso_continuar"):
+        if st.button("Entendi, continuar", key="ta_aviso_continuar", type="primary"):
             _ir_para("upload")
         return
 
     # ---------------------------------------------------------------
     if etapa == "upload":
+        st.subheader("Envie o relatório")
+        st.caption("O arquivo é atualizado a cada etapa; você baixa o resultado no fim.")
         arquivo = st.file_uploader(
             "Relatório descritivo (.xlsx)", type=["xlsx"], key="ta_upload_relatorio"
         )
@@ -211,8 +320,6 @@ def modulo_total_automatico():
             _log("Relatório carregado.")
             _ir_para("limpeza_multiplas")
         return
-
-    st.caption(f"Arquivo em andamento: **{st.session_state.get('ta_nome_arquivo', '?')}**")
 
     # ---------------------------------------------------------------
     if etapa == "limpeza_multiplas":
@@ -228,7 +335,7 @@ def modulo_total_automatico():
         )
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ta_limpeza_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ta_limpeza_continuar", type="primary"):
             with st.spinner("Verificando tabelas de Múltipla..."):
                 wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ta_wb_bytes"]), rich_text=True)
                 ws = wb.active
@@ -277,7 +384,7 @@ def modulo_total_automatico():
             valor_manual = st.number_input(
                 "Valor da base", min_value=0, step=1, key="ta_bm_valor_manual"
             )
-            aplicar_manual = st.button("Aplicar valor e continuar", key="ta_bm_aplicar_manual")
+            aplicar_manual = st.button("Aplicar valor e continuar", key="ta_bm_aplicar_manual", type="primary")
 
             if aplicar_manual:
                 with st.spinner("Aplicando o valor em todas as tabelas..."):
@@ -393,7 +500,7 @@ def modulo_total_automatico():
             ["SPSS Relatoria", "SPSS Inovação"],
             key="ta_origem"
         )
-        if st.button("Continuar", key="ta_origem_continuar"):
+        if st.button("Continuar", key="ta_origem_continuar", type="primary"):
             if origem == "SPSS Inovação":
                 _aplicar_sequencia([
                     {"fn": aplicar_codigo_01, "numero": "01", "nome": "Preenche células do SPSS pirata"},
@@ -417,7 +524,7 @@ def modulo_total_automatico():
             key="ta_termos_novos",
             height=120,
         )
-        if st.button("Continuar", key="ta_termos_continuar"):
+        if st.button("Continuar", key="ta_termos_continuar", type="primary"):
             termos_extras = [t.strip() for t in termos_novos.splitlines() if t.strip()]
             lista_final = TERMOS_EXCLUSAO_CODIGO_03 + termos_extras
             _aplicar_sequencia([
@@ -438,7 +545,7 @@ def modulo_total_automatico():
         )
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ta_layout_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ta_layout_continuar", type="primary"):
             _aplicar_sequencia([
                 {"fn": aplicar_layout_total_automatico, "numero": "04 (layout)", "nome": "Layout da planilha"},
             ])
@@ -455,7 +562,7 @@ def modulo_total_automatico():
         )
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ta_codigo0607_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ta_codigo0607_continuar", type="primary"):
             _aplicar_sequencia([
                 {"fn": aplicar_codigo_06, "numero": "06", "nome": "Ajuste DIN 9 na linha de Pergunta"},
                 {"fn": aplicar_codigo_07, "numero": "07", "nome": "Adiciona linhas e quebra de página"},
@@ -477,7 +584,7 @@ def modulo_total_automatico():
         )
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ta_alturas_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ta_alturas_continuar", type="primary"):
             _aplicar_sequencia([
                 {
                     "fn": aplicar_codigo_09_total, "numero": "09", "nome": "Ajusta a altura das labels",
@@ -513,7 +620,7 @@ def modulo_total_automatico():
             key="ta_capa_mes_ano",
         )
         if st.button(
-            "Inserir capa e continuar", key="ta_capa_continuar",
+            "Inserir capa e continuar", key="ta_capa_continuar", type="primary",
             disabled=not (texto_local.strip() and texto_mes_ano.strip()),
         ):
             with st.spinner("Inserindo capa..."):
@@ -537,12 +644,27 @@ def modulo_total_automatico():
 
     # ---------------------------------------------------------------
     if etapa == "final":
-        st.success("Fluxo concluído!")
-
         wb_final = openpyxl.load_workbook(io.BytesIO(st.session_state["ta_wb_bytes"]), rich_text=True)
         ws_final = wb_final.active
 
         perguntas_base_reduzida = encontrar_perguntas_com_base_reduzida(ws_final)
+        divergencia = detectar_bases_divergentes(ws_final)
+
+        st.success("Fluxo concluído! O relatório está pronto para baixar.")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Etapas registradas", len(st.session_state.get("ta_log", [])))
+        m2.metric("Perguntas com Base reduzida", len(perguntas_base_reduzida))
+        m3.metric("Tabelas com Base diferente", len(divergencia["divergentes"]))
+
+        st.download_button(
+            "Baixar relatório processado",
+            data=st.session_state["ta_wb_bytes"],
+            file_name=f"processado_{st.session_state.get('ta_nome_arquivo', 'relatorio.xlsx')}",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="ta_download_final",
+            type="primary",
+        )
+
         if perguntas_base_reduzida:
             lista_perguntas = "\n".join(f"- {t}" for t in perguntas_base_reduzida)
             st.warning(
@@ -551,7 +673,6 @@ def modulo_total_automatico():
                 "quem...\" explicando o filtro em cada uma:\n\n" + lista_perguntas
             )
 
-        divergencia = detectar_bases_divergentes(ws_final)
         if divergencia["divergentes"]:
             lista_divergentes = "\n".join(
                 f"- {d['titulo']}: base = {d['valor']}" for d in divergencia["divergentes"]
@@ -563,17 +684,9 @@ def modulo_total_automatico():
                 f"intencional:\n\n" + lista_divergentes
             )
 
-        st.subheader("Log das etapas")
-        for linha in st.session_state.get("ta_log", []):
-            st.write(f"- {linha}")
-
-        st.download_button(
-            "Baixar relatório processado",
-            data=st.session_state["ta_wb_bytes"],
-            file_name=f"processado_{st.session_state.get('ta_nome_arquivo', 'relatorio.xlsx')}",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="ta_download_final"
-        )
+        with st.expander("Log das etapas", expanded=True):
+            for linha in st.session_state.get("ta_log", []):
+                st.markdown(f"- ✅ {linha}")
 
         with st.expander("Pré-visualização rápida em tabela (mais leve, só valores aproximados)"):
             wb_preview = openpyxl.load_workbook(io.BytesIO(st.session_state["ta_wb_bytes"]))
@@ -583,7 +696,7 @@ def modulo_total_automatico():
             ws_preview = wb_preview[aba_escolhida]
 
             html_preview, truncou_linhas, truncou_colunas = worksheet_para_html(ws_preview)
-            st.components.v1.html(html_preview, height=620, scrolling=True)
+            st.components.v1.html(html_sobre_fundo_branco(html_preview), height=620, scrolling=True)
 
             avisos = []
             if truncou_linhas:
@@ -602,7 +715,7 @@ def modulo_total_automatico():
             "ajustes usados no Relatório Automatizado. Neste fluxo NÃO é gerado Índice."
         )
 
-        if st.button("Dividir tabelas", key="ta_dividir_tabelas"):
+        if st.button("Dividir tabelas", key="ta_dividir_tabelas", type="primary"):
             with st.status("Dividindo tabelas...", expanded=True) as status:
                 status.update(label="Lendo o relatório...")
                 wb_div = openpyxl.load_workbook(

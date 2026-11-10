@@ -45,7 +45,8 @@ class TestCalculo(unittest.TestCase):
         sexo = next(b for b in r.blocos if b.id == "sexo")
         # válidos (P1 não ausente): pesos M = 1+2+1 = 4 ; F = .5+1.5+1+2 = 5 ; total 9
         self.assertEqual(sexo.categorias, ["Masculino", "Feminino"])
-        self.assertEqual(sexo.pct, [44.4, 55.6])
+        self.assertAlmostEqual(sexo.pct[0], 4 / 9 * 100, places=9)   # precisão total, sem arredondar
+        self.assertAlmostEqual(sexo.pct[1], 5 / 9 * 100, places=9)
         self.assertEqual(sexo.base, 7)          # casos válidos, sem ponderar
         self.assertIsNone(sexo.media)
 
@@ -58,7 +59,7 @@ class TestCalculo(unittest.TestCase):
         pres = pt.calcular_perfil(self.df, VL, "peso", presencial=True)
         idade = next(b for b in pres.blocos if b.id == "idade")
         esperado = np.average(self.df["MEP2"], weights=self.df["peso"])
-        self.assertAlmostEqual(idade.media, round(esperado, 2), places=2)
+        self.assertAlmostEqual(idade.media, esperado, places=9)
         self.assertTrue(all(b.media is None for b in pres.blocos if b.id != "idade"))
         onl = pt.calcular_perfil(self.df, VL, "peso", presencial=False)
         self.assertTrue(all(b.media is None for b in onl.blocos))
@@ -92,7 +93,8 @@ class TestCalculo(unittest.TestCase):
     def test_sem_peso_conta_cada_caso_uma_vez(self):
         r = pt.calcular_perfil(self.df, VL, None, presencial=False)
         sexo = next(b for b in r.blocos if b.id == "sexo")
-        self.assertEqual(sexo.pct, [42.9, 57.1])    # 3/7 e 4/7
+        self.assertAlmostEqual(sexo.pct[0], 3 / 7 * 100, places=9)
+        self.assertAlmostEqual(sexo.pct[1], 4 / 7 * 100, places=9)
 
     def test_categoria_sem_caso_nao_aparece(self):
         df = self.df.copy()
@@ -121,7 +123,7 @@ class TestCalculo(unittest.TestCase):
 class TestExcel(unittest.TestCase):
     def setUp(self):
         self.res = pt.calcular_perfil(_banco(), VL, "peso", presencial=True)
-        self.xlsx = pt.montar_excel_perfil(self.res, "Banco_RJ_Set26.sav", {"Cidade": "X", "UF": "RJ", "Mês/Ano": "Set26"})
+        self.xlsx = pt.montar_excel_perfil(self.res)
 
     def test_o_leitor_do_slide_le_de_volta(self):
         lido = ler_perfil(self.xlsx)
@@ -143,13 +145,28 @@ class TestExcel(unittest.TestCase):
         self.assertNotIn("Média", textos)
         self.assertIn("Base", textos)
 
-    def test_abas_e_conferencia(self):
+    def test_layout_igual_ao_perfil_do_spss(self):
         wb = openpyxl.load_workbook(io.BytesIO(self.xlsx))
-        self.assertEqual(wb.sheetnames, [pt.NOME_ABA, pt.NOME_ABA_CONFERENCIA])
-        cf = [[c.value for c in l] for l in wb[pt.NOME_ABA_CONFERENCIA].iter_rows()]
-        achatado = [str(v) for l in cf for v in l if v is not None]
-        self.assertIn("Presencial (rua)", achatado)
-        self.assertIn("peso", achatado)
+        self.assertEqual(wb.sheetnames, [pt.NOME_ABA])          # uma aba só, como o arquivo do SPSS
+        ws = wb[pt.NOME_ABA]
+        self.assertIn("A1:B1", [str(r) for r in ws.merged_cells.ranges])
+        t = ws["A1"]
+        self.assertEqual((t.value, t.font.b, t.font.name, t.font.sz, t.alignment.horizontal), ("Sexo", True, "Arial", 9, "center"))
+        self.assertEqual((ws["A2"].value, ws["B2"].value), (" ", "Total"))
+        self.assertEqual(ws["B3"].number_format, "0.0")
+        self.assertEqual(ws["B3"].border.top.style, "medium")
+        self.assertIsNone(ws["B4"].border.top.style)
+        self.assertEqual(ws["A5"].value, "Base")
+        self.assertEqual(ws["B5"].number_format, "###0")
+        self.assertEqual(ws["B5"].border.bottom.style, "medium")
+        self.assertEqual(ws.row_dimensions[1].height, 18.0)
+        self.assertEqual(ws.row_dimensions[3].height, 16.0)
+        self.assertIsNone(ws["A6"].value)                        # linha em branco entre blocos
+        self.assertEqual(ws["A7"].value, "Idade")
+        medias = [c for l in ws.iter_rows(min_col=1, max_col=1) for c in l if c.value == "Média"]
+        self.assertEqual(len(medias), 1)
+        self.assertEqual(ws.cell(medias[0].row, 2).number_format, "0.00")
+        self.assertEqual(ws.cell(medias[0].row, 2).border.bottom.style, "medium")
 
     def test_pre_visualizacao_mostra_texto_formatado(self):
         ws = pt.planilha_perfil(self.res, como_texto=True)

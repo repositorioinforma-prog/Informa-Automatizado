@@ -121,8 +121,7 @@ def modulo_perfil():
         try:
             with st.spinner("Calculando as tabelas..."):
                 res = calcular_perfil(df, banco.value_labels, peso, presencial)
-                ident = {"Cidade": cidade.strip(), "UF": uf.strip().upper(), "Mês/Ano": mes_ano.strip()}
-                xlsx = montar_excel_perfil(res, arq_sav.name, ident)
+                xlsx = montar_excel_perfil(res)
         except Exception as e:
             st.error(f"Não consegui gerar o Perfil: {e}")
             return
@@ -156,6 +155,6 @@ def modulo_perfil():
     altura = int(min(760, max(240, ws.max_row * 21 + 50)))
     st.components.v1.html(html_sobre_fundo_branco(html), height=altura, scrolling=True)
     st.caption(
-        "Mesma aba «Perfil» do Excel: % do total ponderado (1 casa), «Base» sem ponderar e, no presencial, "
+        "Mesma aba «Perfil» do Excel: % do total ponderado (mostrado com 1 casa; o Excel guarda o valor inteiro), «Base» sem ponderar e, no presencial, "
         "a «Média» de idade. O arquivo baixado é a fonte da verdade."
     )

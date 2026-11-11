@@ -102,6 +102,21 @@ def html_boas_vindas(
     return corpo
 
 
+def html_cartoes(itens: Sequence[tuple[str, str, str]]) -> str:
+    """Cartões informativos sem numeração de etapa: itens = [(marcador, título, texto)].
+    O marcador é um símbolo curto (ex.: «≤», «÷», «🔒» ou «1»)."""
+    corpo = "".join(
+        f'<div class="ta-item"><span class="ta-num">{html.escape(m)}</span><div><h4>{html.escape(t)}</h4>'
+        f'<p>{html.escape(d)}</p></div></div>'
+        for m, t, d in itens
+    )
+    return f'<div class="ta-boasvindas">{corpo}</div>'
+
+
+def mostrar_cartoes(itens: Sequence[tuple[str, str, str]], etiqueta: str = "COMO FUNCIONA") -> None:
+    st.markdown(CSS + f'<div class="ta-etiqueta">{html.escape(etiqueta)}</div>' + html_cartoes(itens), unsafe_allow_html=True)
+
+
 def html_arquivo(nome: str | None) -> str:
     return f'<div class="ta-arquivo">Arquivo em andamento <b>{html.escape(nome)}</b></div>' if nome else ""
 

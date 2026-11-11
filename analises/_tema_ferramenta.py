@@ -49,6 +49,11 @@ TEMA_ESCURO: Dict[str, tuple] = {
         '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
         "#a78bfa",
     ),
+    "Divisor de Tabelas de Regioes": (
+        "Ajusta as tabelas que passam do limite de altura da página",
+        '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18M8 7.5h8M8 16.5h8"/>',
+        "#a78bfa",
+    ),
     "Perfil": (
         "Sexo, idade, renda, escolaridade e religião do banco",
         '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',

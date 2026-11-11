@@ -7,6 +7,7 @@ import openpyxl
 import pandas as pd
 import streamlit as st
 
+from analises import _assistente_ui as _ui
 from core.divisor_tabelas_math import processar_workbook, ALTURA_UTIL, ALTURA_LINHA_PADRAO
 from core.relatorio_automatizado_math import aplicar_codigo_16, remover_termo_do_sumario
 
@@ -34,29 +35,53 @@ def _result_rows(resumo):
     return rows
 
 
+_ETAPAS = [
+    ("enviar", "Enviar o relatório"),
+    ("dividir", "Dividir tabelas"),
+    ("indice", "Índice (opcional)"),
+]
+_NOME_CURTO = {"enviar": "Enviar", "dividir": "Dividir tabelas", "indice": "Índice (opcional)"}
+
+
+def _etapa_atual():
+    """Em que ponto do fluxo a pessoa está (só para o stepper)."""
+    if st.session_state.get("divisor_tabelas_resultado_com_indice") is not None:
+        return "indice"
+    if st.session_state.get("divisor_tabelas_resumo"):
+        return "dividir"
+    return "enviar"
+
+
+def _cartoes_regras():
+    """(marcador, título, texto) das regras do divisor — texto separado da tela para poder ser testado."""
+    linhas_uteis = int(ALTURA_UTIL / ALTURA_LINHA_PADRAO)
+    return [
+        ("≤", "Orçamento por altura",
+         f"Cada tabela vive num slot de página de 32 linhas de referência (altura {ALTURA_LINHA_PADRAO:g} cada): "
+         f"2 acima + {linhas_uteis} úteis + 2 abaixo. Soma a altura real de título, cabeçalho, labels, Base, "
+         f"Pergunta e legenda contra {ALTURA_UTIL:g}. Passou disso, a tabela é candidata a ajuste."),
+        ("÷", "Tabelas normais",
+         "Os labels são divididos em partes, repetindo cabeçalho/Base/Pergunta/legenda em cada uma. "
+         "A 2ª parte em diante recebe «Continuação» (numerada como «Continuação - Parte 1», «Parte 2»… "
+         "quando há mais de duas partes; só «Continuação» quando são apenas duas)."),
+        ("🔒", "Tabelas protegidas",
+         "IPV, Avaliação com Aprovação/Regular/Reprovação e similares nunca têm os labels divididos. "
+         "Com legenda, ela vai para uma página própria; sem legenda, a tabela só é reportada, sem alteração."),
+    ]
+
+
 def modulo_divisor_tabelas():
-    st.header("Divisor de Tabelas de Regiões")
-    linhas_uteis_equivalentes = int(ALTURA_UTIL / ALTURA_LINHA_PADRAO)
-    st.write(
-        f"Envie um relatório Excel finalizado. Cada tabela vive num slot de página "
-        f"de 32 linhas de referência (altura {ALTURA_LINHA_PADRAO:g} cada) — 2 acima "
-        f"+ {linhas_uteis_equivalentes} linhas úteis + 2 abaixo. O orçamento é por "
-        f"ALTURA real (não contagem de linha), já que nem toda linha tem a mesma "
-        f"altura — soma a altura de título, cabeçalho, labels, Base, Pergunta e "
-        f"legenda (quando houver) do bloco inteiro contra {ALTURA_UTIL:g} de altura "
-        f"útil. Tabela que passar disso é candidata a ajuste."
-    )
-    st.info(
-        "Tabelas normais que ultrapassam o limite têm os labels divididos em "
-        "partes, repetindo cabeçalho/Base/Pergunta/legenda em cada uma, com "
-        "'Continuação' a partir da 2ª (numerada como 'Continuação - Parte 1', "
-        "'Parte 2' etc. quando há mais de uma divisão; só 'Continuação', sem "
-        "número, quando a tabela é dividida em apenas 2 partes). Tabelas "
-        "protegidas (ex.: IPV, Avaliação com Aprovação/Regular/Reprovação) "
-        "nunca têm os labels divididos — se tiverem legenda, ela é movida "
-        "pra uma página própria; sem legenda, a tabela só é reportada, sem "
-        "alteração automática."
-    )
+    # o título e a marca vêm do cabeçalho da ferramenta (app.py); aqui só o fluxo
+    espaco_stepper = st.empty()
+
+    def _pintar_stepper():
+        with espaco_stepper.container():
+            _ui.mostrar_stepper(_ETAPAS, _etapa_atual(), _NOME_CURTO)
+
+    _pintar_stepper()
+    if _etapa_atual() == "enviar":
+        _ui.mostrar_cartoes(_cartoes_regras())
+    st.subheader("Envie o relatório finalizado")
 
     uploaded = st.file_uploader(
         "Carregar relatório Excel",
@@ -66,7 +91,7 @@ def modulo_divisor_tabelas():
     if uploaded is None:
         return
 
-    if st.button("Analisar e ajustar tabelas", key="divisor_tabelas_processar"):
+    if st.button("Analisar e ajustar tabelas", key="divisor_tabelas_processar", type="primary"):
         try:
             raw = uploaded.getvalue()
             keep_vba = uploaded.name.lower().endswith(".xlsm")
@@ -84,6 +109,7 @@ def modulo_divisor_tabelas():
             st.session_state["divisor_tabelas_resumo"] = resumo
             st.session_state["divisor_tabelas_nome"] = uploaded.name
             st.session_state.pop("divisor_tabelas_resultado_com_indice", None)
+            _pintar_stepper()
         except Exception as exc:
             st.exception(exc)
             return
@@ -93,6 +119,7 @@ def modulo_divisor_tabelas():
     if not resumo or out_bytes is None:
         return
 
+    st.success("Análise concluída. O relatório processado está pronto para baixar.")
     c1, c2, c3, c4, c5, c6 = st.columns(6)
     c1.metric("Abas analisadas", resumo["sheets_analyzed"])
     c2.metric("Tabelas candidatas", resumo["tables_candidatas"])
@@ -100,26 +127,6 @@ def modulo_divisor_tabelas():
     c4.metric("Legenda movida", resumo["legenda_movida"])
     c5.metric("Não corrigidas", resumo["nao_corrigidas"])
     c6.metric("Partes geradas", resumo["partes_geradas"])
-
-    if resumo["nao_corrigidas"]:
-        titulos_nao_corrigidas = [
-            a["titulo"] for a in resumo["acoes"] if a["acao"] == "nao_corrigida"
-        ]
-        lista = "\n".join(f"- {t}" for t in titulos_nao_corrigidas)
-        st.warning(
-            "Tabela(s) protegida(s) sem legenda (ou onde nem sem legenda cabe "
-            "nas linhas úteis) — passam do limite mas não têm como ser "
-            "corrigidas automaticamente sem dividir os labels no meio. "
-            "Precisam de ajuste manual:\n\n" + lista
-        )
-
-    if resumo["tables_candidatas"]:
-        st.success(f"{resumo['tables_candidatas']} tabela(s) precisaram de ajuste.")
-        rows = _result_rows(resumo)
-        if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    else:
-        st.success("Nenhuma tabela ultrapassa o limite de linhas úteis segundo o critério atual.")
 
     original_name = st.session_state.get("divisor_tabelas_nome", "relatorio.xlsx")
     if "." in original_name:
@@ -134,26 +141,46 @@ def modulo_divisor_tabelas():
         file_name=output_name,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         key="divisor_tabelas_download",
+        type="primary",
     )
+
+    if resumo["nao_corrigidas"]:
+        titulos_nao_corrigidas = [
+            a["titulo"] for a in resumo["acoes"] if a["acao"] == "nao_corrigida"
+        ]
+        lista = "\n".join(f"- {t}" for t in titulos_nao_corrigidas)
+        st.warning(
+            "Tabela(s) protegida(s) sem legenda (ou onde nem sem legenda cabe "
+            "nas linhas úteis) — passam do limite mas não têm como ser "
+            "corrigidas automaticamente sem dividir os labels no meio. "
+            "Precisam de ajuste manual:\n\n" + lista
+        )
+
+    if resumo["tables_candidatas"]:
+        st.markdown(f"**{resumo['tables_candidatas']} tabela(s) precisaram de ajuste:**")
+        rows = _result_rows(resumo)
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("Nenhuma tabela ultrapassa o limite de linhas úteis segundo o critério atual.")
 
     st.divider()
     st.subheader("Índice / Sumário (código 16)")
     st.caption(
-        "O Índice lista os títulos junto com o número de página REAL, "
-        "calculado a partir das quebras de página do arquivo — por isso "
-        "só faz sentido rodar depois de dividir as tabelas, nunca antes "
-        "(dividir tabela desloca tudo que vem depois e muda a "
-        "paginação; se o índice for gerado antes, os números de página "
-        "ficam errados). Rode aqui, direto em cima do arquivo já "
-        "dividido acima, sem precisar baixar e reenviar em outra tela."
+        "O Índice lista os títulos com o número de página REAL, calculado "
+        "a partir das quebras de página do arquivo — por isso só faz sentido "
+        "rodar depois de dividir as tabelas (dividir desloca tudo que vem "
+        "depois e muda a paginação). Rode aqui, em cima do arquivo já "
+        "dividido, sem baixar e reenviar."
     )
-    if st.button("Rodar Índice sobre o arquivo já dividido", key="divisor_tabelas_rodar_indice"):
+    if st.button("Rodar Índice sobre o arquivo já dividido", key="divisor_tabelas_rodar_indice", type="primary"):
         with st.spinner("Gerando o Índice..."):
             wb_com_indice = openpyxl.load_workbook(io.BytesIO(out_bytes), rich_text=True)
             n_titulos = aplicar_codigo_16(wb_com_indice.active)
             saida_indice = io.BytesIO()
             wb_com_indice.save(saida_indice)
             st.session_state["divisor_tabelas_resultado_com_indice"] = saida_indice.getvalue()
+        _pintar_stepper()
         st.success(f"Índice gerado com {n_titulos} título(s) listado(s).")
 
     resultado_com_indice = st.session_state.get("divisor_tabelas_resultado_com_indice")
@@ -169,6 +196,7 @@ def modulo_divisor_tabelas():
             file_name=output_name_indice,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="divisor_tabelas_download_com_indice",
+            type="primary",
         )
 
         st.markdown("**Prévia do Sumário**")

@@ -45,6 +45,8 @@ from core.base_multiplas_math import (
     gerar_workbook_com_base,
     bloco_eh_religiao,
 )
+from analises import _assistente_ui as _ui
+from core.analise_perguntas_math import html_sobre_fundo_branco
 from core.planilha_utils import worksheet_para_html
 from core.pdf_preview import gerar_pdf_preview, wkhtmltopdf_disponivel
 from core.cabecalho_correcao_math import parsear_blocos_cabecalho_referencia, aplicar_codigo_13
@@ -184,23 +186,60 @@ _ETAPAS_COM_PROGRESSO = [
 ]
 
 
+# Nome curto (cabe no stepper) e o que cada etapa faz (tela de boas-vindas)
+_NOME_CURTO = {
+    "limpeza_multiplas": "Limpeza",
+    "base_multiplas": "Base Múltiplas",
+    "origem": "Células e bordas",
+    "novos_termos": "Ordenar",
+    "codigo_04": "Rótulos",
+    "etapa_13": "Cabeçalhos",
+    "base_reduzida": "Base reduzida",
+    "codigo_06_07": "DIN 9",
+    "legendas": "Legendas",
+    "codigo_08_12": "Alturas",
+    "codigo_17": "Bordas",
+    "codigo_14": "Cabeç./rodapé",
+    "codigo_15": "Capas",
+    "final": "Concluído",
+}
+_DESCRICAO_ETAPA = {
+    "limpeza_multiplas": "Tira a linha branca das Múltiplas que ainda não têm Base.",
+    "base_multiplas": "Preenche a Base das Múltiplas, por arquivo ou com um valor.",
+    "origem": "Você escolhe a origem (SPSS Relatoria ou Inovação) e o app preenche células e bordas.",
+    "novos_termos": "Ordena as tabelas (código 03), com termos extras opcionais.",
+    "codigo_04": "Formata os rótulos das tabelas.",
+    "etapa_13": "Corrige os cabeçalhos a partir de um modelo de referência (opcional).",
+    "base_reduzida": "Aplica o layout e marca as perguntas com Base reduzida.",
+    "codigo_06_07": "Fonte DIN 9, linhas e quebras de página.",
+    "legendas": "Aplica as legendas a partir de um arquivo, se o relatório tiver.",
+    "codigo_08_12": "Base pequena, alturas de label, título e pergunta.",
+    "codigo_17": "Bordas do cabeçalho e Muda Bordas.",
+    "codigo_14": "Cabeçalho e rodapé das páginas.",
+    "codigo_15": "Insere as capas de resultados.",
+    "final": "Confere o resultado, baixa o arquivo e, se quiser, divide as tabelas e gera o Índice.",
+}
+_FORA_DO_FLUXO = ("Capa e contra-capa", "Logo no cabeçalho", "Índice (código 16)")
+
+
+def _html_stepper(etapa_atual):
+    """HTML do stepper (separado da tela para poder ser testado)."""
+    return _ui.html_stepper(_ETAPAS_COM_PROGRESSO, etapa_atual, _NOME_CURTO)
+
+
 def _mostrar_progresso(etapa_atual):
-    nomes = [nome for chave, nome in _ETAPAS_COM_PROGRESSO]
-    chaves = [chave for chave, nome in _ETAPAS_COM_PROGRESSO]
-    if etapa_atual not in chaves:
-        return
-    idx = chaves.index(etapa_atual)
-    st.progress(
-        idx / (len(chaves) - 1),
-        text=f"Etapa {idx + 1} de {len(chaves)}: {nomes[idx]}",
-    )
+    _ui.mostrar_stepper(_ETAPAS_COM_PROGRESSO, etapa_atual, _NOME_CURTO)
+
+
+def _html_boas_vindas():
+    return _ui.html_boas_vindas(_ETAPAS_COM_PROGRESSO, _DESCRICAO_ETAPA, _FORA_DO_FLUXO)
 
 
 # =========================================================
 # Assistente
 # =========================================================
 def modulo_relatorio_automatizado():
-    st.header("Relatório Automatizado")
+    # o título e a marca vêm do cabeçalho da ferramenta (app.py); aqui só o assistente
 
     if "ra_step" not in st.session_state:
         st.session_state["ra_step"] = "aviso"
@@ -208,10 +247,9 @@ def modulo_relatorio_automatizado():
         st.session_state["ra_log"] = []
 
     if st.session_state["ra_step"] != "aviso":
-        col_reiniciar, col_auto = st.columns([1, 2])
-        with col_reiniciar:
-            if st.button("🔄 Reiniciar do zero", key="ra_reiniciar"):
-                _reiniciar()
+        col_arq, col_auto, col_reiniciar = st.columns([3, 2.4, 1.3], vertical_alignment="center")
+        with col_arq:
+            _ui.mostrar_arquivo(st.session_state.get("ra_nome_arquivo"))
         with col_auto:
             st.checkbox(
                 "⚡ Modo semiautomático",
@@ -225,6 +263,9 @@ def modulo_relatorio_automatizado():
                     "cabeçalhos, limite de base reduzida etc.)."
                 ),
             )
+        with col_reiniciar:
+            if st.button("🔄 Reiniciar", key="ra_reiniciar", use_container_width=True):
+                _reiniciar()
 
     etapa = st.session_state["ra_step"]
     modo_auto = st.session_state.get("ra_modo_auto", False)
@@ -232,17 +273,20 @@ def modulo_relatorio_automatizado():
 
     # ---------------------------------------------------------------
     if etapa == "aviso":
-        st.warning(
-            "Antes de começar: importe aqui o **relatório descritivo já "
-            "com as bases nas múltiplas aplicadas** (rode o módulo "
-            "\"Base nas Múltiplas\" antes, se ainda não tiver feito isso)."
+        _ui.mostrar_boas_vindas(
+            "<p>Antes de começar: importe aqui o <b>relatório descritivo já com as bases nas "
+            "múltiplas aplicadas</b> (rode o módulo «Base nas Múltiplas» antes, se ainda não "
+            "tiver feito isso). O assistente aplica as etapas abaixo, na ordem.</p>",
+            _ETAPAS_COM_PROGRESSO, _DESCRICAO_ETAPA, _FORA_DO_FLUXO,
         )
-        if st.button("Entendi, continuar", key="ra_aviso_continuar"):
+        if st.button("Entendi, continuar", key="ra_aviso_continuar", type="primary"):
             _ir_para("upload")
         return
 
     # ---------------------------------------------------------------
     if etapa == "upload":
+        st.subheader("Envie o relatório")
+        st.caption("O arquivo é atualizado a cada etapa; você baixa o resultado no fim.")
         arquivo = st.file_uploader(
             "Relatório descritivo (.xlsx)", type=["xlsx"], key="ra_upload_relatorio"
         )
@@ -252,10 +296,6 @@ def modulo_relatorio_automatizado():
             _log("Relatório carregado.")
             _ir_para("limpeza_multiplas")
         return
-
-    # A partir daqui, sempre existe um arquivo em andamento em
-    # st.session_state["ra_wb_bytes"] — mostramos isso pra situar a pessoa
-    st.caption(f"Arquivo em andamento: **{st.session_state.get('ra_nome_arquivo', '?')}**")
 
     # ---------------------------------------------------------------
     if etapa == "limpeza_multiplas":
@@ -271,7 +311,7 @@ def modulo_relatorio_automatizado():
         )
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ra_limpeza_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ra_limpeza_continuar", type="primary"):
             with st.status("Limpando linhas em branco...", expanded=True) as status:
                 status.update(label="Lendo o arquivo...")
                 wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
@@ -399,7 +439,7 @@ def modulo_relatorio_automatizado():
             ["SPSS Relatoria", "SPSS Inovação"],
             key="ra_origem"
         )
-        if st.button("Continuar", key="ra_origem_continuar"):
+        if st.button("Continuar", key="ra_origem_continuar", type="primary"):
             if origem == "SPSS Inovação":
                 _aplicar_sequencia([
                     {"fn": aplicar_codigo_01, "numero": "01", "nome": "Preenche células do SPSS pirata"},
@@ -424,7 +464,7 @@ def modulo_relatorio_automatizado():
             key="ra_termos_novos",
             height=120,
         )
-        if st.button("Continuar", key="ra_termos_continuar"):
+        if st.button("Continuar", key="ra_termos_continuar", type="primary"):
             termos_extras = [t.strip() for t in termos_novos.splitlines() if t.strip()]
             st.session_state["ra_termos_novos_lista"] = termos_extras
             lista_final = TERMOS_EXCLUSAO_CODIGO_03 + termos_extras
@@ -444,7 +484,7 @@ def modulo_relatorio_automatizado():
         )
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo04_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo04_continuar", type="primary"):
             _aplicar_sequencia([
                 {"fn": aplicar_codigo_04, "numero": "04", "nome": "Formatação de rótulos específicos"},
             ])
@@ -459,7 +499,7 @@ def modulo_relatorio_automatizado():
             "(colunas com base menor que esse valor serão removidas)",
             min_value=1, value=25, step=1, key="ra_limite_base_reduzida"
         )
-        if st.button("Aplicar e continuar", key="ra_base_reduzida_continuar"):
+        if st.button("Aplicar e continuar", key="ra_base_reduzida_continuar", type="primary"):
             _aplicar_sequencia([
                 {
                     "fn": aplicar_codigo_05, "numero": "05", "nome": "Formata layout / Base reduzida",
@@ -479,7 +519,7 @@ def modulo_relatorio_automatizado():
         )
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo0607_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo0607_continuar", type="primary"):
             _aplicar_sequencia([
                 {"fn": aplicar_codigo_06, "numero": "06", "nome": "Ajuste DIN 9 na linha de Pergunta"},
                 {"fn": aplicar_codigo_07, "numero": "07", "nome": "Adiciona linhas e quebra de página"},
@@ -587,7 +627,7 @@ def modulo_relatorio_automatizado():
         )
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo0812_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo0812_continuar", type="primary"):
             _aplicar_sequencia([
                 {"fn": aplicar_codigo_08, "numero": "08", "nome": "Base pequena"},
                 {
@@ -621,7 +661,7 @@ def modulo_relatorio_automatizado():
         )
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo17_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo17_continuar", type="primary"):
             _aplicar_sequencia([
                 {"fn": aplicar_codigo_17, "numero": "17", "nome": "Bordas espessas no cabeçalho"},
                 # pedido do Lucas: logo depois do 17, roda o Muda Bordas
@@ -691,7 +731,7 @@ def modulo_relatorio_automatizado():
         st.caption("Aplica o aviso legal fixo no cabeçalho e o número de página no rodapé.")
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo14_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo14_continuar", type="primary"):
             _aplicar_sequencia([
                 {
                     "fn": aplicar_codigo_14, "numero": "14", "nome": "Cabeçalho/rodapé de impressão fixos",
@@ -712,7 +752,7 @@ def modulo_relatorio_automatizado():
         )
         if modo_auto:
             st.caption("⚡ Modo semiautomático: aplicando automaticamente...")
-        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo15_continuar"):
+        if modo_auto or st.button("Aplicar e continuar", key="ra_codigo15_continuar", type="primary"):
             with st.status("Inserindo capas de resultados...", expanded=True) as status:
                 status.update(label="Lendo o relatório...")
                 wb = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
@@ -742,8 +782,6 @@ def modulo_relatorio_automatizado():
 
     # ---------------------------------------------------------------
     if etapa == "final":
-        st.success("Fluxo concluído!")
-
         wb_final = openpyxl.load_workbook(io.BytesIO(st.session_state["ra_wb_bytes"]), rich_text=True)
         ws_final = wb_final.active
 
@@ -757,6 +795,22 @@ def modulo_relatorio_automatizado():
             )
 
         divergencia = detectar_bases_divergentes(ws_final)
+
+        st.success("Fluxo concluído! O relatório está pronto para baixar.")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Etapas registradas", len(st.session_state.get("ra_log", [])))
+        m2.metric("Perguntas com Base reduzida", len(perguntas_base_reduzida))
+        m3.metric("Tabelas com Base diferente", len(divergencia["divergentes"]))
+
+        st.download_button(
+            "Baixar relatório processado",
+            data=st.session_state["ra_wb_bytes"],
+            file_name=f"processado_{st.session_state.get('ra_nome_arquivo', 'relatorio.xlsx')}",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="ra_download_final",
+            type="primary",
+        )
+
         if divergencia["divergentes"]:
             lista_divergentes = "\n".join(
                 f"- {d['titulo']}: base = {d['valor']}" for d in divergencia["divergentes"]
@@ -787,9 +841,9 @@ def modulo_relatorio_automatizado():
             "- [ ] Rodar o Índice (código 16, em Códigos Individuais)"
         )
 
-        st.subheader("Log das etapas")
-        for linha in st.session_state.get("ra_log", []):
-            st.write(f"- {linha}")
+        with st.expander("Log das etapas", expanded=True):
+            for linha in st.session_state.get("ra_log", []):
+                st.markdown(f"- ✅ {linha}")
 
         st.subheader("Logo da Informa")
         st.caption(
@@ -814,14 +868,6 @@ def modulo_relatorio_automatizado():
                 mime="image/jpeg",
                 key="ra_download_logo",
             )
-
-        st.download_button(
-            "Baixar relatório processado",
-            data=st.session_state["ra_wb_bytes"],
-            file_name=f"processado_{st.session_state.get('ra_nome_arquivo', 'relatorio.xlsx')}",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="ra_download_final"
-        )
 
         st.subheader("Pré-visualização do resultado")
 
@@ -866,7 +912,7 @@ def modulo_relatorio_automatizado():
             ws_preview = wb_preview[aba_escolhida]
 
             html_preview, truncou_linhas, truncou_colunas = worksheet_para_html(ws_preview)
-            st.components.v1.html(html_preview, height=620, scrolling=True)
+            st.components.v1.html(html_sobre_fundo_branco(html_preview), height=620, scrolling=True)
 
             avisos = []
             if truncou_linhas:

@@ -44,6 +44,11 @@ TEMA_ESCURO: Dict[str, tuple] = {
         '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/>',
         "#a78bfa",
     ),
+    "Relatório Automatizado": (
+        "Descritivo: do SPSS ao relatório formatado, etapa por etapa",
+        '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/>',
+        "#a78bfa",
+    ),
     "Perfil": (
         "Sexo, idade, renda, escolaridade e religião do banco",
         '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/>',

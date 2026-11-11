@@ -36,6 +36,7 @@ import io
 import openpyxl
 import streamlit as st
 
+from analises import _assistente_ui as _ui
 from core.analise_perguntas_math import html_sobre_fundo_branco
 
 from core.base_multiplas_math import (
@@ -167,89 +168,20 @@ _FORA_DO_FLUXO = (
     "Exclusão por Base reduzida", "Cabeçalhos repetidos", "Legendas", "Capas de Resultados (código 15)",
 )
 
-_CSS_ASSISTENTE = """
-<style>
-.ta-steps{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 10px}
-.ta-passo{display:flex;align-items:center;gap:8px;padding:6px 11px 6px 7px;border-radius:999px;border:1px solid var(--tf-linha,#273244);
-  background:rgba(255,255,255,.03);color:var(--tf-fraco,#6f7f96);font-size:13px;font-weight:700;line-height:1;white-space:nowrap}
-.ta-bola{flex:none;width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;
-  border:1.5px solid var(--tf-linha2,#33415a);color:var(--tf-muted,#9aa8bd)}
-.stApp .ta-passo .ta-nome{color:var(--tf-fraco,#6f7f96)}
-.stApp .ta-passo.ta-feito .ta-nome{color:var(--tf-muted,#9aa8bd)}
-.stApp .ta-passo.ta-atual .ta-nome{color:#0e1520}
-.stApp .ta-passo .ta-bola{color:var(--tf-muted,#9aa8bd)}
-.stApp .ta-passo.ta-feito .ta-bola{color:var(--tf-lima,#b4e26b)}
-.stApp .ta-passo.ta-atual .ta-bola{color:var(--tf-lima,#b4e26b)}
-.ta-passo.ta-feito .ta-bola{background:rgba(180,226,107,.16);border-color:rgba(180,226,107,.55);color:var(--tf-lima,#b4e26b)}
-.ta-passo.ta-atual{color:#0e1520;background:var(--tf-lima,#b4e26b);border-color:var(--tf-lima,#b4e26b);box-shadow:0 6px 18px rgba(164,214,86,.25)}
-.ta-passo.ta-atual .ta-bola{background:#0e1520;border-color:#0e1520;color:var(--tf-lima,#b4e26b)}
-.ta-barra{height:4px;border-radius:4px;background:var(--tf-linha,#273244);overflow:hidden;margin-bottom:6px}
-.ta-barra > span{display:block;height:100%;background:var(--tf-lima,#b4e26b);border-radius:4px;transition:width .3s}
-.ta-etiqueta{font-size:12px;font-weight:800;letter-spacing:1.6px;color:var(--tf-lima,#b4e26b);margin:0 0 2px}
-.ta-arquivo{display:inline-flex;align-items:center;gap:8px;max-width:100%;padding:8px 14px;border:1px solid var(--tf-linha,#273244);
-  border-radius:12px;background:rgba(255,255,255,.03);font-size:14px;color:var(--tf-muted,#9aa8bd)}
-.stApp .ta-arquivo b, .stApp .ta-arquivo{color:var(--tf-muted,#9aa8bd)}
-.stApp .ta-arquivo b{color:#fff}
-.ta-arquivo b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ta-boasvindas{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin:6px 0 16px}
-.ta-item{display:flex;gap:12px;align-items:flex-start;padding:14px 16px;border:1px solid var(--tf-linha,#273244);border-radius:16px;
-  background:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,.015))}
-.stApp .ta-item .ta-num{color:#0e1520}
-.ta-num{flex:none;width:30px;height:30px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;
-  color:#0e1520;background:var(--tf-lima,#b4e26b)}
-.stApp .ta-item h4{margin:0 0 2px;font-size:15.5px;color:#fff;padding:0;border:0}
-.stApp .ta-item p{margin:0;font-size:13.5px;color:var(--tf-muted,#9aa8bd);line-height:1.4}
-.ta-fora{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 18px;color:var(--tf-muted,#9aa8bd);font-size:13.5px}
-.ta-fora span.ta-tag{padding:4px 10px;border-radius:8px;border:1px dashed var(--tf-linha2,#33415a);color:var(--tf-fraco,#6f7f96)}
-</style>
-"""
+_CSS_ASSISTENTE = _ui.CSS
 
 
 def _html_stepper(etapa_atual):
     """HTML do stepper (separado da tela para poder ser testado)."""
-    chaves = [c for c, _ in _ETAPAS_COM_PROGRESSO]
-    if etapa_atual not in chaves:
-        return ""
-    idx = chaves.index(etapa_atual)
-    passos = []
-    for i, chave in enumerate(chaves):
-        estado = "ta-feito" if i < idx else ("ta-atual" if i == idx else "")
-        bola = "✓" if i < idx else str(i + 1)
-        passos.append(
-            f'<div class="ta-passo {estado}"><span class="ta-bola">{bola}</span>'
-            f'<span class="ta-nome">{html.escape(_NOME_CURTO[chave])}</span></div>'
-        )
-    pct = round(100 * idx / (len(chaves) - 1))
-    nome = dict(_ETAPAS_COM_PROGRESSO)[etapa_atual]
-    return (
-        f'<div class="ta-etiqueta">ETAPA {idx + 1} DE {len(chaves)}</div>'
-        f'<div class="ta-barra"><span style="width:{pct}%"></span></div>'
-        f'<div class="ta-steps" title="{html.escape(nome)}">' + "".join(passos) + "</div>"
-    )
+    return _ui.html_stepper(_ETAPAS_COM_PROGRESSO, etapa_atual, _NOME_CURTO)
 
 
 def _mostrar_progresso(etapa_atual):
-    corpo = _html_stepper(etapa_atual)
-    if corpo:
-        st.markdown(_CSS_ASSISTENTE + corpo, unsafe_allow_html=True)
+    _ui.mostrar_stepper(_ETAPAS_COM_PROGRESSO, etapa_atual, _NOME_CURTO)
 
 
 def _html_boas_vindas():
-    itens = []
-    n = 0
-    for chave, nome in _ETAPAS_COM_PROGRESSO:
-        if chave == "final":
-            continue
-        n += 1
-        itens.append(
-            f'<div class="ta-item"><span class="ta-num">{n}</span><div><h4>{html.escape(nome)}</h4>'
-            f'<p>{html.escape(_DESCRICAO_ETAPA[chave])}</p></div></div>'
-        )
-    fora = "".join(f'<span class="ta-tag">{html.escape(x)}</span>' for x in _FORA_DO_FLUXO)
-    return (
-        '<div class="ta-boasvindas">' + "".join(itens) + "</div>"
-        f'<div class="ta-fora"><b>Fora deste fluxo:</b> {fora}</div>'
-    )
+    return _ui.html_boas_vindas(_ETAPAS_COM_PROGRESSO, _DESCRICAO_ETAPA, _FORA_DO_FLUXO)
 
 
 # =========================================================
@@ -267,10 +199,7 @@ def modulo_total_automatico():
         with col_arq:
             nome_arq = st.session_state.get("ta_nome_arquivo")
             if nome_arq:
-                st.markdown(
-                    _CSS_ASSISTENTE + f'<div class="ta-arquivo">Arquivo em andamento <b>{html.escape(nome_arq)}</b></div>',
-                    unsafe_allow_html=True,
-                )
+                _ui.mostrar_arquivo(nome_arq)
         with col_auto:
             st.checkbox(
                 "⚡ Modo semiautomático",
@@ -294,14 +223,11 @@ def modulo_total_automatico():
 
     # ---------------------------------------------------------------
     if etapa == "aviso":
-        st.markdown(
-            _CSS_ASSISTENTE
-            + '<div class="ta-etiqueta">COMO FUNCIONA</div>'
-            + "<p>Versão enxuta do Relatório Automatizado, pensada para relatórios <b>pelo total</b>. "
+        _ui.mostrar_boas_vindas(
+            "<p>Versão enxuta do Relatório Automatizado, pensada para relatórios <b>pelo total</b>. "
             "Você envia o descritivo e o assistente aplica as etapas abaixo, na ordem. "
-            "Ao final, o Divisor de Tabelas é opcional (e não gera Índice).</p>"
-            + _html_boas_vindas(),
-            unsafe_allow_html=True,
+            "Ao final, o Divisor de Tabelas é opcional (e não gera Índice).</p>",
+            _ETAPAS_COM_PROGRESSO, _DESCRICAO_ETAPA, _FORA_DO_FLUXO,
         )
         if st.button("Entendi, continuar", key="ta_aviso_continuar", type="primary"):
             _ir_para("upload")

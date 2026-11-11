@@ -1,22 +1,27 @@
+# --- app
 streamlit
+# pin necessário por compatibilidade com o Streamlit
 starlette<1.0
+# pin: mantém pkg_resources disponível
+setuptools<81
+
+# --- dados e Excel
 numpy
-pillow
 pandas
-sweetviz
-seaborn
+scipy
+openpyxl
+# o pandas usa o XlsxWriter como motor padrão de to_excel quando ele está instalado (Controle)
+XlsxWriter
+xlrd
+pyreadstat
+
+# --- gráficos, imagens e apresentações
 matplotlib
 plotly
-scipy
-scikit-learn
-prince
 adjustText
-statsmodels
-requests
-openpyxl
-pyreadstat
-XlsxWriter
+pillow
 python-pptx
+
+# --- texto
 rapidfuzz
-setuptools<81
-xlrd
+requests
